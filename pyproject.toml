@@ -1,6 +1,6 @@
 [project]
 name = "sentinel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI-powered contextual security auditing platform"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,6 +46,11 @@ dev = [
 [project.scripts]
 sentinel = "sentinel.cli:app"
 sentinel-mcp = "sentinel.mcp:run"
+
+[tool.hatch.version]
+source = "regex"
+path = "VERSION"
+pattern = "^(?P<version>[^\n]+)"
 
 [build-system]
 requires = ["hatchling"]
