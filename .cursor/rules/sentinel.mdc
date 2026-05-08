@@ -1,0 +1,54 @@
+---
+description: SENTINEL security auditing MCP tools — when and how to use them
+globs: []
+alwaysApply: false
+---
+
+# SENTINEL Security Auditing
+
+SENTINEL MCP tools are available for security analysis. Use them proactively when the user asks about security, vulnerabilities, audits, or code review.
+
+## Tool Reference
+
+| Tool | Purpose |
+|------|---------|
+| `sentinel_audit` | Full codebase security audit |
+| `sentinel_surface` | Attack surface map: endpoints, auth, data exposure |
+| `sentinel_trace` | Taint flow: user input → dangerous sinks |
+| `sentinel_attack_graph` | Trust boundary and privilege escalation graph (Mermaid) |
+| `sentinel_logic` | IDOR, BAC, business logic flaws |
+| `sentinel_review` | Deep single-file security review |
+| `sentinel_verify` | Confirm or dismiss a specific finding |
+| `sentinel_diff` | Security impact of a git diff / PR |
+| `sentinel_harden` | Hardening checklist from codebase scan |
+| `sentinel_exploit_chain` | Full exploitation chain for a finding |
+| `sentinel_hunt` | Fast category-focused scan (injection/auth/secrets) |
+| `sentinel_rules` | List all detection rules |
+| `sentinel_report` | Retrieve stored audit as markdown/json/sarif |
+
+## When to Invoke
+
+Trigger SENTINEL when the user asks:
+- "review this code for security issues"
+- "find vulnerabilities in this project"
+- "is this code safe / secure?"
+- "audit this directory"
+- "check for SQL injection / XSS / command injection"
+- "is this PR safe to merge?"
+- "what's the attack surface of this app?"
+- "trace where user input goes"
+- "show me privilege escalation paths"
+
+## Quick Start
+
+```
+# Full audit
+sentinel_audit(target="./")
+
+# PR review
+sentinel_diff(repo_path="./", base="main")
+
+# Single file
+sentinel_review(file_path="./app/auth.py")
+```
+El tambien tiene un ejemplo caveman.skill

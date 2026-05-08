@@ -1,12 +1,22 @@
 {
-  "_docs": "SENTINEL MCP configuration examples. Copy the block that matches your setup into your editor's MCP config.",
+  "_docs": "SENTINEL MCP configuration examples. Copy the block that matches your setup into your editor's MCP config. All examples use stdio transport.",
 
   "local_development": {
-    "_description": "Run from the project root using uv (recommended for contributors).",
+    "_description": "Run from the project root using uv (recommended for contributors). No cwd needed when opening the project in your editor.",
     "mcpServers": {
       "sentinel": {
         "command": "uv",
         "args": ["run", "python", "-m", "sentinel.mcp"]
+      }
+    }
+  },
+
+  "global_install": {
+    "_description": "After `curl -fsSL .../install.sh | bash` or `irm .../install.ps1 | iex`. Replace ~/.sentinel with your SENTINEL_HOME if customized.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"]
       }
     }
   },
@@ -21,7 +31,7 @@
   },
 
   "uvx_from_github": {
-    "_description": "Run directly from GitHub — no local clone required. Useful for CI/CD agents.",
+    "_description": "Run directly from GitHub — no local clone required. Useful for CI/CD agents and ephemeral environments.",
     "mcpServers": {
       "sentinel": {
         "command": "uvx",
@@ -33,8 +43,8 @@
     }
   },
 
-  "with_llm_enrichment": {
-    "_description": "Enable Claude LLM enrichment via environment variable injection.",
+  "with_claude_enrichment": {
+    "_description": "Enable Claude LLM enrichment. Top findings get AI-generated attack narratives and remediation guidance.",
     "mcpServers": {
       "sentinel": {
         "command": "uv",
@@ -78,13 +88,63 @@
     }
   },
 
-  "cursor_windows_example": {
+  "openhands": {
+    "_description": "OpenHands / All-Hands AI agent configuration.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"],
+        "env": {
+          "SENTINEL_LLM_PROVIDER": "claude",
+          "SENTINEL_LLM_API_KEY": "${ANTHROPIC_API_KEY}"
+        }
+      }
+    }
+  },
+
+  "cline_vscode": {
+    "_description": "Cline (VS Code extension). Add under Settings > Cline > MCP Servers, or paste into cline_mcp_settings.json.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"],
+        "disabled": false,
+        "autoApprove": []
+      }
+    }
+  },
+
+  "continue_vscode": {
+    "_description": "Continue (VS Code / JetBrains extension). Add to ~/.continue/config.json under mcpServers.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"]
+      }
+    }
+  },
+
+  "cursor_windows": {
     "_description": "Windows absolute path example for Cursor / Windsurf when not using uv globally.",
     "mcpServers": {
       "sentinel": {
         "command": "uv",
-        "args": ["run", "python", "-m", "sentinel.mcp"],
-        "cwd": "C:\\Users\\yourname\\sentinel"
+        "args": ["run", "--project", "C:\\\\Users\\\\yourname\\\\.sentinel", "python", "-m", "sentinel.mcp"]
+      }
+    }
+  },
+
+  "ci_github_actions": {
+    "_description": "CI/CD: run sentinel_diff as a security gate in GitHub Actions. Use uvx for zero-install execution.",
+    "_usage": "In your workflow: uvx --from git+https://github.com/Wembie/Sentinel sentinel audit ./  --format sarif --output sentinel.sarif",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uvx",
+        "args": ["--from", "git+https://github.com/Wembie/Sentinel", "sentinel-mcp"],
+        "env": {
+          "SENTINEL_LLM_PROVIDER": "none",
+          "SENTINEL_MAX_FILES_PER_AUDIT": "5000"
+        }
       }
     }
   }
