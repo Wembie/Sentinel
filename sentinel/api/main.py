@@ -7,6 +7,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sentinel import __version__
 from sentinel.config import get_settings
 from sentinel.logging import configure_logging
 
@@ -33,7 +34,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="SENTINEL",
         description="AI-powered contextual security auditing platform",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 

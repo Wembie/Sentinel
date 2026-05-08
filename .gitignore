@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+ENV/
+
+# uv
+.uv/
+
+# Build / packaging
+.hatch/
+.hg/
+htmlcov/
+site/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage/
+nosetests.xml
+test-results/
+junit*.xml
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+
+# Ruff / linting
+.ruff_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.secret
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# SENTINEL runtime
+.sentinel-active
+*.sarif.tmp
+audit_cache/

@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from sentinel import __version__
 from sentinel.config import get_settings
 from sentinel.logging import configure_logging
 from sentinel.models.audit import AuditRequest, AuditScope
@@ -20,6 +21,26 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"sentinel {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    pass
 
 
 @app.command("audit")

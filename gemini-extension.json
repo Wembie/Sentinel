@@ -1,13 +1,20 @@
 {
   "name": "sentinel",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "AI-powered contextual security auditing platform. Performs offensive-minded SAST: taint flow tracing, attack graph generation, exploit chain narratives, and hardening checklists.",
   "author": "Wembie",
   "repo": "https://github.com/Wembie/Sentinel",
   "contextFileName": "GEMINI.md",
   "mcp": {
     "command": "uv",
-    "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"],
+    "args": [
+      "run",
+      "--project",
+      "~/.sentinel",
+      "python",
+      "-m",
+      "sentinel.mcp"
+    ],
     "transport": "stdio"
   },
   "tools": [
@@ -61,8 +68,21 @@
     }
   ],
   "activationKeywords": [
-    "security", "vulnerability", "audit", "SAST", "injection", "SQL injection",
-    "command injection", "XSS", "IDOR", "authorization", "authentication",
-    "attack surface", "exploit", "CVE", "penetration testing", "hardening"
+    "security",
+    "vulnerability",
+    "audit",
+    "SAST",
+    "injection",
+    "SQL injection",
+    "command injection",
+    "XSS",
+    "IDOR",
+    "authorization",
+    "authentication",
+    "attack surface",
+    "exploit",
+    "CVE",
+    "penetration testing",
+    "hardening"
   ]
 }

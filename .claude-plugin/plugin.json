@@ -1,14 +1,24 @@
 {
   "name": "sentinel",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "AI-powered contextual security auditing platform — red-team-grade SAST that thinks like an attacker.",
   "author": "Wembie",
   "license": "MIT",
   "repo": "https://github.com/Wembie/Sentinel",
-  "capabilities": ["mcp", "skills"],
+  "capabilities": [
+    "mcp",
+    "skills"
+  ],
   "mcp": {
     "command": "uv",
-    "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"],
+    "args": [
+      "run",
+      "--project",
+      "~/.sentinel",
+      "python",
+      "-m",
+      "sentinel.mcp"
+    ],
     "transport": "stdio"
   },
   "skills": "skills/",

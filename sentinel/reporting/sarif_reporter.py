@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sentinel import __version__
 from sentinel.models.audit import AuditResult
 from sentinel.models.finding import Finding
 
@@ -32,8 +33,8 @@ class SARIFReporter:
                     "tool": {
                         "driver": {
                             "name": "SENTINEL",
-                            "version": "0.1.0",
-                            "informationUri": "https://github.com/your-org/sentinel",
+                            "version": __version__,
+                            "informationUri": "https://github.com/Wembie/sentinel",
                             "rules": rules,
                         }
                     },
