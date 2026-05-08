@@ -1,0 +1,91 @@
+{
+  "_docs": "SENTINEL MCP configuration examples. Copy the block that matches your setup into your editor's MCP config.",
+
+  "local_development": {
+    "_description": "Run from the project root using uv (recommended for contributors).",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "sentinel.mcp"]
+      }
+    }
+  },
+
+  "global_entry_point": {
+    "_description": "After `pip install sentinel` or `uv tool install sentinel`, sentinel-mcp is on PATH.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "sentinel-mcp"
+      }
+    }
+  },
+
+  "uvx_from_github": {
+    "_description": "Run directly from GitHub — no local clone required. Useful for CI/CD agents.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uvx",
+        "args": [
+          "--from", "git+https://github.com/Wembie/Sentinel",
+          "sentinel-mcp"
+        ]
+      }
+    }
+  },
+
+  "with_llm_enrichment": {
+    "_description": "Enable Claude LLM enrichment via environment variable injection.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "sentinel.mcp"],
+        "env": {
+          "SENTINEL_LLM_PROVIDER": "claude",
+          "SENTINEL_LLM_API_KEY": "${ANTHROPIC_API_KEY}",
+          "SENTINEL_LLM_MODEL": "claude-sonnet-4-6"
+        }
+      }
+    }
+  },
+
+  "with_openai_enrichment": {
+    "_description": "Enable OpenAI LLM enrichment.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "sentinel.mcp"],
+        "env": {
+          "SENTINEL_LLM_PROVIDER": "openai",
+          "SENTINEL_LLM_API_KEY": "${OPENAI_API_KEY}",
+          "SENTINEL_LLM_MODEL": "gpt-4o"
+        }
+      }
+    }
+  },
+
+  "custom_rules_and_plugins": {
+    "_description": "Load extra rule directories and plugin directories at startup.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "sentinel.mcp"],
+        "env": {
+          "SENTINEL_RULES_DIRS": "/path/to/my-rules:/path/to/team-rules",
+          "SENTINEL_PLUGIN_DIRS": "/path/to/my-plugins",
+          "SENTINEL_MAX_FILES_PER_AUDIT": "2000"
+        }
+      }
+    }
+  },
+
+  "cursor_windows_example": {
+    "_description": "Windows absolute path example for Cursor / Windsurf when not using uv globally.",
+    "mcpServers": {
+      "sentinel": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "sentinel.mcp"],
+        "cwd": "C:\\Users\\yourname\\sentinel"
+      }
+    }
+  }
+}
