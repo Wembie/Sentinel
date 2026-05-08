@@ -61,24 +61,67 @@ sentinel_attack_graph(audit_id="<id>")
 
 ## Configuration
 
-All configuration via environment variables — no hardcoded paths:
+All configuration via environment variables — no `.env` file required:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SENTINEL_LLM_PROVIDER` | `none` | `claude` \| `openai` \| `none` |
-| `SENTINEL_LLM_API_KEY` | — | API key for LLM enrichment stage |
-| `SENTINEL_LLM_MODEL` | — | Model identifier |
+| `SENTINEL_LLM_API_KEY` | — | API key for LLM enrichment (optional) |
+| `SENTINEL_LLM_MODEL` | `claude-sonnet-4-6` | Model identifier |
 | `SENTINEL_LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` |
 | `SENTINEL_MAX_FILE_SIZE_KB` | `512` | Per-file size cap |
 | `SENTINEL_MAX_FILES_PER_AUDIT` | `1000` | File count cap |
 | `SENTINEL_RULES_DIRS` | — | Extra rule directories (colon-separated) |
 | `SENTINEL_PLUGIN_DIRS` | — | Extra plugin directories |
 
-## Adding to This Project
+Config file (optional, higher priority than env vars):
+`~/.config/sentinel/config.json` or `~/.sentinel/config.json`
 
-Run `sentinel init` from any project root to write SENTINEL agent rules into that project:
+## Installation
+
+```bash
+# macOS / Linux / WSL
+curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/Wembie/Sentinel/main/install.ps1 | iex
+
+# With Claude Code hooks (auto-activates SENTINEL at session start)
+bash install.sh --with-hooks
+
+# Via Claude Code plugin marketplace
+claude plugin marketplace add sentinel
+
+# Via skills CLI (works with Cursor, Windsurf, Cline, and 30+ agents)
+npx -y skills add https://github.com/Wembie/Sentinel
+```
+
+## Claude Code Hooks
+
+SENTINEL ships a SessionStart hook that auto-injects tool availability context at session start.
+Install once — active in every future session:
+
+```bash
+bash ~/.sentinel/hooks/install.sh
+# or on Windows:
+& "$HOME\.sentinel\hooks\install.ps1"
+```
+
+The hook:
+- Checks if `sentinel` is registered as an MCP server
+- Injects a reminder listing available tools into the system prompt
+- Shows `🛡 SENTINEL` badge in the statusline
+
+Uninstall: `bash ~/.sentinel/hooks/uninstall.sh`
+
+## Per-Project Setup
+
+Run `sentinel init` from any project root to write SENTINEL agent rules:
 ```bash
 uv run sentinel init
 # or, after global install:
 sentinel init
 ```
+
+Writes: `.cursor/rules/sentinel.mdc`, `.windsurf/rules/sentinel.md`, `.clinerules/sentinel.md`,
+appends to `AGENTS.md` and `.github/copilot-instructions.md`.

@@ -5,14 +5,17 @@
 #   bash install.sh [OPTIONS]
 #
 # Options:
-#   --dev        Clone repository and install in editable mode
-#   --upgrade    Pull latest changes and re-sync dependencies
-#   --uninstall  Remove SENTINEL installation
-#   --dry-run    Print all actions without executing anything
-#   --list       List detected agents and exit
-#   --no-mcp     Skip MCP auto-registration
-#   --all        Register with all detected agents (default: auto)
-#   --only <id>  Register with a specific agent only (e.g. --only claude)
+#   --dev           Clone repository and install in editable mode
+#   --upgrade       Pull latest changes and re-sync dependencies
+#   --uninstall     Remove SENTINEL installation
+#   --dry-run       Print all actions without executing anything
+#   --list          List detected agents and exit
+#   --no-mcp        Skip MCP auto-registration
+#   --with-hooks    Install Claude Code session hooks (auto-activates SENTINEL at session start)
+#   --with-init     Run `sentinel init` in the current directory after install
+#   --all           Enable --with-hooks + --with-mcp (hooks + MCP registration for all detected agents)
+#   --minimal       Install package only; skip MCP registration, hooks, and init
+#   --only <id>     Register with a specific agent only (e.g. --only claude)
 #
 # Environment overrides:
 #   SENTINEL_HOME   Install directory (default: ~/.sentinel)
@@ -40,19 +43,28 @@ RESET="\033[0m"
 MODE="install"
 DRY_RUN=false
 NO_MCP=false
+WITH_HOOKS=false
+WITH_INIT=false
+MINIMAL=false
 ONLY_AGENT=""
 
 for arg in "$@"; do
   case "$arg" in
-    --dev)       MODE="dev" ;;
-    --upgrade)   MODE="upgrade" ;;
-    --uninstall) MODE="uninstall" ;;
-    --dry-run)   DRY_RUN=true ;;
-    --list)      MODE="list" ;;
-    --no-mcp)    NO_MCP=true ;;
-    --only)      shift; ONLY_AGENT="$1" ;;
+    --dev)         MODE="dev" ;;
+    --upgrade)     MODE="upgrade" ;;
+    --uninstall)   MODE="uninstall" ;;
+    --dry-run)     DRY_RUN=true ;;
+    --list)        MODE="list" ;;
+    --no-mcp)      NO_MCP=true ;;
+    --with-hooks)  WITH_HOOKS=true ;;
+    --with-init)   WITH_INIT=true ;;
+    --all)         WITH_HOOKS=true; WITH_INIT=false ;;
+    --minimal)     NO_MCP=true; MINIMAL=true ;;
+    --only)        shift; ONLY_AGENT="${1:-}" ;;
     --help|-h)
-      echo "Usage: install.sh [--dev] [--upgrade] [--uninstall] [--dry-run] [--list] [--no-mcp] [--only <agent>]"
+      echo "Usage: install.sh [--dev] [--upgrade] [--uninstall] [--dry-run] [--list]"
+      echo "                  [--no-mcp] [--with-hooks] [--with-init] [--all] [--minimal]"
+      echo "                  [--only <agent-id>]"
       exit 0
       ;;
   esac
@@ -176,10 +188,41 @@ detect_agents() {
   info "Scanning for AI coding agents..."
   DETECTED_AGENTS=()
 
+  local ext_dirs=("$HOME/.vscode/extensions" "$HOME/.cursor/extensions" "$HOME/.windsurf/extensions")
+
+  # ── Native CLI agents ──────────────────────────────────────────────────────
+
   # Claude Code
   if need_cmd claude || [[ -d "$HOME/.claude" ]]; then
     DETECTED_AGENTS+=("claude:Claude Code")
   fi
+
+  # Gemini CLI
+  if need_cmd gemini || [[ -f "$HOME/.gemini/config.json" ]] || [[ -d "$HOME/.gemini" ]]; then
+    DETECTED_AGENTS+=("gemini:Gemini CLI")
+  fi
+
+  # OpenAI Codex CLI
+  if need_cmd codex || [[ -d "$HOME/.codex" ]]; then
+    DETECTED_AGENTS+=("codex:Codex CLI")
+  fi
+
+  # GitHub Copilot CLI (gh extension)
+  if need_cmd gh && gh extension list 2>/dev/null | grep -q "gh-copilot"; then
+    DETECTED_AGENTS+=("copilot-cli:GitHub Copilot CLI")
+  fi
+
+  # Aider
+  if need_cmd aider; then
+    DETECTED_AGENTS+=("aider:Aider")
+  fi
+
+  # v0 (Vercel)
+  if need_cmd v0; then
+    DETECTED_AGENTS+=("v0:v0")
+  fi
+
+  # ── IDE editors ─────────────────────────────────────────────────────────────
 
   # Cursor
   if need_cmd cursor || [[ -d "$HOME/.cursor" ]]; then
@@ -209,43 +252,60 @@ detect_agents() {
     fi
   done
 
+  # Sourcegraph Amp
+  if need_cmd amp || [[ -d "$HOME/.amp" ]]; then
+    DETECTED_AGENTS+=("amp:Sourcegraph Amp")
+  fi
+
+  # ── VS Code / Cursor extensions ──────────────────────────────────────────────
+
   # Cline (VS Code extension)
-  local ext_dirs=("$HOME/.vscode/extensions" "$HOME/.cursor/extensions" "$HOME/.windsurf/extensions")
+  local cline_added=false
   for ext_dir in "${ext_dirs[@]}"; do
     if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "saoudrizwan.claude-dev"; then
-      DETECTED_AGENTS+=("cline:Cline")
-      break
+      DETECTED_AGENTS+=("cline:Cline"); cline_added=true; break
     fi
   done
 
   # Continue (VS Code extension)
   for ext_dir in "${ext_dirs[@]}"; do
     if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "continue.continue"; then
-      DETECTED_AGENTS+=("continue:Continue")
-      break
+      DETECTED_AGENTS+=("continue:Continue"); break
     fi
   done
 
   # Roo / Roo Cline
   for ext_dir in "${ext_dirs[@]}"; do
     if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "rooveterinaryinc.roo-cline"; then
-      DETECTED_AGENTS+=("roo:Roo")
-      break
+      DETECTED_AGENTS+=("roo:Roo"); break
     fi
   done
 
-  # OpenHands
+  # ── AI coding platforms ──────────────────────────────────────────────────────
+
+  # OpenHands / All-Hands
   if need_cmd openhands || [[ -d "$HOME/.openhands" ]]; then
     DETECTED_AGENTS+=("openhands:OpenHands")
   fi
 
-  # Codex CLI
-  if need_cmd codex || [[ -d "$HOME/.codex" ]]; then
-    DETECTED_AGENTS+=("codex:Codex")
+  # Devin
+  if [[ -d "$HOME/.devin" ]]; then
+    DETECTED_AGENTS+=("devin:Devin")
+  fi
+
+  # Kode
+  if need_cmd kode || [[ -d "$HOME/.kode" ]]; then
+    DETECTED_AGENTS+=("kode:Kode")
+  fi
+
+  # Aide
+  if need_cmd aide || [[ -d "$HOME/.aide" ]]; then
+    DETECTED_AGENTS+=("aide:Aide")
   fi
 
   if [[ ${#DETECTED_AGENTS[@]} -eq 0 ]]; then
-    warn "No AI coding agents detected. Configure MCP manually — see $INSTALL_DIR/mcp.example.json"
+    warn "No AI coding agents detected."
+    warn "Install MCP manually using mcp.example.json, or run: sentinel init"
     return
   fi
 
@@ -262,8 +322,11 @@ do_list() {
   echo ""
   detect_agents
   echo ""
-  echo "Supported agents: Claude Code, Cursor, Windsurf, VS Code, JetBrains, Cline, Continue, Roo, OpenHands, Codex"
-  echo "MCP config examples: $INSTALL_DIR/mcp.example.json (after install)"
+  echo "Supported: Claude Code, Gemini CLI, Codex CLI, Copilot CLI, Aider, v0,"
+  echo "           Cursor, Windsurf, VS Code, JetBrains, Amp, Cline, Continue,"
+  echo "           Roo, OpenHands, Devin, Kode, Aide — plus any skills-CLI-compatible agent."
+  echo ""
+  echo "Manual MCP config: $([ -d "$INSTALL_DIR" ] && echo "$INSTALL_DIR/mcp.example.json" || echo "mcp.example.json (run installer first)")"
 }
 
 # ─── MCP registration ─────────────────────────────────────────────────────────
@@ -280,7 +343,6 @@ register_mcp() {
     local agent_id="${entry%%:*}"
     local agent_label="${entry##*:}"
 
-    # Filter to --only target if specified
     [[ -n "$ONLY_AGENT" && "$agent_id" != "$ONLY_AGENT" ]] && continue
 
     case "$agent_id" in
@@ -300,11 +362,40 @@ register_mcp() {
           manual_agents+=("$agent_label")
         fi
         ;;
+      gemini)
+        if need_cmd gemini; then
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "  [dry-run] gemini extensions install https://github.com/Wembie/Sentinel"
+            registered+=("$agent_label (dry-run)")
+          elif gemini extensions install "https://github.com/Wembie/Sentinel" 2>/dev/null; then
+            info "Gemini CLI: extension installed."
+            registered+=("$agent_label")
+          else
+            warn "Gemini CLI: auto-install failed."
+            manual_agents+=("$agent_label")
+          fi
+        else
+          manual_agents+=("$agent_label")
+        fi
+        ;;
       *)
         manual_agents+=("$agent_label")
         ;;
     esac
   done
+
+  # Skills CLI fallback: covers Cursor, Windsurf, Cline, Continue, Roo, and 30+ more
+  # Runs unless --minimal or --only is specified
+  if need_cmd npx && [[ "$MINIMAL" != "true" ]] && [[ -z "$ONLY_AGENT" ]]; then
+    info "Running skills CLI registration (covers all skills-compatible agents)..."
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo "  [dry-run] npx -y skills add https://github.com/Wembie/Sentinel"
+    elif npx -y skills add "https://github.com/Wembie/Sentinel" 2>/dev/null; then
+      info "Skills CLI: SENTINEL registered."
+    else
+      warn "Skills CLI registration failed (npx error — non-fatal)."
+    fi
+  fi
 
   if [[ ${#registered[@]} -gt 0 ]]; then
     echo ""
@@ -322,7 +413,26 @@ register_mcp() {
     echo "  }"
     echo ""
     echo "  See $install_dir/mcp.example.json for editor-specific examples."
-    echo "  Or run: sentinel init  (in any project root) to drop rule files for all detected editors."
+    echo "  Or run: sentinel init  (in any project root) to drop rule files."
+  fi
+}
+
+# ─── hooks installation ───────────────────────────────────────────────────────
+
+install_hooks() {
+  local install_dir="$1"
+  local hooks_installer="$install_dir/hooks/install.sh"
+
+  if [[ ! -f "$hooks_installer" ]]; then
+    warn "Hooks installer not found at $hooks_installer — skipping."
+    return
+  fi
+
+  info "Installing Claude Code hooks..."
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "  [dry-run] bash $hooks_installer --dry-run"
+  else
+    bash "$hooks_installer" || warn "Hooks installation failed (non-fatal)."
   fi
 }
 
@@ -411,13 +521,25 @@ do_install() {
   detect_agents
   register_mcp "$INSTALL_DIR"
 
+  # Optional: install Claude Code hooks
+  if [[ "$WITH_HOOKS" == "true" ]]; then
+    install_hooks "$INSTALL_DIR"
+  fi
+
+  # Optional: run sentinel init in current directory
+  if [[ "$WITH_INIT" == "true" ]]; then
+    info "Running sentinel init in current directory..."
+    run_cmd uv run --project "$INSTALL_DIR" sentinel init .
+  fi
+
   echo ""
   bold "SENTINEL installed successfully!"
   echo ""
-  echo -e "  ${GREEN}Start MCP server:${RESET}  sentinel-mcp"
-  echo -e "  ${GREEN}Run audit:        ${RESET}  uv run --project \"$INSTALL_DIR\" sentinel audit ./my-project"
-  echo -e "  ${GREEN}List rules:       ${RESET}  uv run --project \"$INSTALL_DIR\" sentinel rules"
-  echo -e "  ${GREEN}Per-project setup:${RESET}  uv run --project \"$INSTALL_DIR\" sentinel init"
+  echo -e "  ${GREEN}Start MCP server:${RESET}    sentinel-mcp"
+  echo -e "  ${GREEN}Run audit:${RESET}           uv run --project \"$INSTALL_DIR\" sentinel audit ./"
+  echo -e "  ${GREEN}List rules:${RESET}          uv run --project \"$INSTALL_DIR\" sentinel rules"
+  echo -e "  ${GREEN}Per-project setup:${RESET}   uv run --project \"$INSTALL_DIR\" sentinel init"
+  echo -e "  ${GREEN}Install hooks:${RESET}       bash $INSTALL_DIR/hooks/install.sh"
   echo ""
 }
 

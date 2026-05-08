@@ -1,0 +1,13 @@
+{
+  "id": "sentinel",
+  "name": "SENTINEL Security Auditing",
+  "tagline": "Red-team-grade SAST for every codebase",
+  "description": "SENTINEL is an AI-powered contextual security auditing platform. It thinks like a red team operator — static analysis, taint flow tracing, attack graph generation, exploit chain narratives, and hardening checklists. Works across Claude Code, Cursor, Windsurf, Cline, VS Code, JetBrains, and any MCP-compatible runtime.",
+  "author": "Wembie",
+  "repo": "https://github.com/Wembie/Sentinel",
+  "categories": ["security", "sast", "devsecops", "auditing"],
+  "capabilities": ["mcp-tools", "security-analysis", "vulnerability-detection"],
+  "install_command": "claude plugin marketplace add sentinel",
+  "docs_url": "https://github.com/Wembie/Sentinel#readme",
+  "keywords": ["security", "sast", "static-analysis", "vulnerability", "pentesting", "devsecops"]
+}

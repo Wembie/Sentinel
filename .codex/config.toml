@@ -1,0 +1,9 @@
+[features]
+hooks = true
+mcp = true
+
+[mcp]
+# Activate SENTINEL via the global install (installed by install.sh or install.ps1).
+# For local dev, override with: uv run python -m sentinel.mcp
+server = "uv run --project ~/.sentinel python -m sentinel.mcp"
+name = "sentinel"

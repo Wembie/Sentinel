@@ -1,0 +1,35 @@
+{
+  "id": "sentinel",
+  "name": "SENTINEL",
+  "version": "0.1.1",
+  "description": "AI-powered contextual security auditing. Red-team-grade SAST: taint flow, attack graphs, exploit chains, hardening.",
+  "author": "Wembie",
+  "repo": "https://github.com/Wembie/Sentinel",
+  "categories": ["security", "sast", "devsecops"],
+  "install": {
+    "skills_cli": "npx -y skills add https://github.com/Wembie/Sentinel",
+    "claude_code": "claude plugin marketplace add sentinel",
+    "gemini_cli": "gemini extensions install https://github.com/Wembie/Sentinel",
+    "manual": "curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash"
+  },
+  "mcp": {
+    "command": "uv",
+    "args": ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"],
+    "transport": "stdio"
+  },
+  "tools": [
+    "sentinel_audit",
+    "sentinel_surface",
+    "sentinel_trace",
+    "sentinel_attack_graph",
+    "sentinel_logic",
+    "sentinel_review",
+    "sentinel_verify",
+    "sentinel_diff",
+    "sentinel_harden",
+    "sentinel_exploit_chain",
+    "sentinel_hunt",
+    "sentinel_rules",
+    "sentinel_report"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "on_session_start": {
+    "inject": "SENTINEL security auditing MCP tools are available. Invoke proactively: sentinel_audit for full audits, sentinel_surface for attack surface mapping, sentinel_trace for taint flow, sentinel_review for single-file review, sentinel_diff for PR audits, sentinel_harden for hardening checklists, sentinel_exploit_chain for full exploitation narratives. No API key required for structural analysis."
+  }
+}

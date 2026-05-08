@@ -1,0 +1,1 @@
+description = "Run a full SENTINEL security audit of the codebase: AST parsing, rule matching, graph analysis, and finding prioritization"

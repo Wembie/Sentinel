@@ -1,21 +1,36 @@
-# SENTINEL Installer — Windows (PowerShell 5.1+)
-# Usage:
-#   irm https://raw.githubusercontent.com/Wembie/Sentinel/main/install.ps1 | iex
-#   .\install.ps1 [-Dev] [-Upgrade] [-Uninstall] [-DryRun] [-List] [-NoMcp] [-Only <agent>]
-#
-# Options:
-#   -Dev        Clone repository and install in editable mode (requires git)
-#   -Upgrade    Pull latest changes and re-sync dependencies
-#   -Uninstall  Remove SENTINEL installation
-#   -DryRun     Print all actions without executing anything
-#   -List       List detected agents and exit
-#   -NoMcp      Skip MCP auto-registration
-#   -Only <id>  Register with a specific agent only (e.g. -Only claude)
-#
-# Environment overrides:
-#   $env:SENTINEL_HOME   Install directory (default: $HOME\.sentinel)
-#   $env:SENTINEL_BIN    Bin directory      (default: $HOME\.local\bin)
-
+<#
+.SYNOPSIS
+    SENTINEL Installer — Windows (PowerShell 5.1+)
+.DESCRIPTION
+    Installs SENTINEL, registers MCP servers, and optionally installs Claude Code hooks.
+.PARAMETER Dev
+    Clone repository and install in editable mode (requires git).
+.PARAMETER Upgrade
+    Pull latest changes and re-sync dependencies.
+.PARAMETER Uninstall
+    Remove SENTINEL installation.
+.PARAMETER DryRun
+    Print all actions without executing anything.
+.PARAMETER List
+    List detected agents and exit.
+.PARAMETER NoMcp
+    Skip MCP auto-registration.
+.PARAMETER WithHooks
+    Install Claude Code session hooks (auto-activates SENTINEL at session start).
+.PARAMETER WithInit
+    Run `sentinel init` in the current directory after install.
+.PARAMETER All
+    Enable WithHooks and MCP registration for all detected agents.
+.PARAMETER Minimal
+    Install package only; skip MCP registration, hooks, and init.
+.PARAMETER Only
+    Register with a specific agent only (e.g. -Only claude).
+.EXAMPLE
+    irm https://raw.githubusercontent.com/Wembie/Sentinel/main/install.ps1 | iex
+    .\install.ps1 -DryRun -List
+    .\install.ps1 -All
+    .\install.ps1 -WithHooks
+#>
 param(
     [switch]$Dev,
     [switch]$Upgrade,
@@ -23,10 +38,19 @@ param(
     [switch]$DryRun,
     [switch]$List,
     [switch]$NoMcp,
+    [switch]$WithHooks,
+    [switch]$WithInit,
+    [switch]$All,
+    [switch]$Minimal,
     [string]$Only = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# --all implies WithHooks
+if ($All) { $WithHooks = $true }
+# --minimal implies NoMcp
+if ($Minimal) { $NoMcp = $true }
 
 # ─── configuration ────────────────────────────────────────────────────────────
 
@@ -95,8 +119,7 @@ function Install-Uv {
     }
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + $env:PATH
     if (-not (Test-Command "uv")) {
-        Write-Warn "uv installed but not on PATH yet. You may need to restart your terminal."
-        Write-Warn "Add '$env:USERPROFILE\.cargo\bin' or '$env:USERPROFILE\.local\bin' to PATH."
+        Write-Warn "uv installed but not on PATH yet. Restart terminal or add ~/.cargo/bin to PATH."
     } else {
         Write-Info "uv installed: $(uv --version)"
     }
@@ -151,10 +174,45 @@ function Detect-Agents {
     Write-Info "Scanning for AI coding agents..."
     $script:DetectedAgents.Clear()
 
+    $extDirs = @(
+        (Join-Path $HOME ".vscode\extensions"),
+        (Join-Path $HOME ".cursor\extensions"),
+        (Join-Path $HOME ".windsurf\extensions")
+    )
+
+    # ── Native CLI agents ──────────────────────────────────────────────────────
+
     # Claude Code
     if ((Test-Command "claude") -or (Test-Path (Join-Path $HOME ".claude"))) {
         $script:DetectedAgents.Add("claude:Claude Code")
     }
+
+    # Gemini CLI
+    if ((Test-Command "gemini") -or (Test-Path (Join-Path $HOME ".gemini"))) {
+        $script:DetectedAgents.Add("gemini:Gemini CLI")
+    }
+
+    # OpenAI Codex CLI
+    if ((Test-Command "codex") -or (Test-Path (Join-Path $HOME ".codex"))) {
+        $script:DetectedAgents.Add("codex:Codex CLI")
+    }
+
+    # GitHub Copilot CLI
+    if ((Test-Command "gh") -and (& gh extension list 2>$null | Select-String "gh-copilot")) {
+        $script:DetectedAgents.Add("copilot-cli:GitHub Copilot CLI")
+    }
+
+    # Aider
+    if (Test-Command "aider") {
+        $script:DetectedAgents.Add("aider:Aider")
+    }
+
+    # v0 (Vercel)
+    if (Test-Command "v0") {
+        $script:DetectedAgents.Add("v0:v0")
+    }
+
+    # ── IDE editors ─────────────────────────────────────────────────────────────
 
     # Cursor
     if ((Test-Command "cursor") -or (Test-Path (Join-Path $HOME ".cursor"))) {
@@ -166,13 +224,13 @@ function Detect-Agents {
         (Join-Path $HOME ".codeium\windsurf"),
         (Join-Path $HOME ".windsurf")
     )
+    $windsurfFound = $false
     foreach ($p in $windsurfPaths) {
-        if (Test-Path $p) {
-            $script:DetectedAgents.Add("windsurf:Windsurf")
-            break
-        }
+        if (Test-Path $p) { $windsurfFound = $true; break }
     }
-    if (Test-Command "windsurf") { $script:DetectedAgents.Add("windsurf:Windsurf") }
+    if ($windsurfFound -or (Test-Command "windsurf")) {
+        $script:DetectedAgents.Add("windsurf:Windsurf")
+    }
 
     # VS Code
     if (Test-Command "code") {
@@ -191,46 +249,62 @@ function Detect-Agents {
         }
     }
 
-    # Cline (VS Code extension)
-    $extDirs = @(
-        (Join-Path $HOME ".vscode\extensions"),
-        (Join-Path $HOME ".cursor\extensions")
-    )
+    # Sourcegraph Amp
+    if ((Test-Command "amp") -or (Test-Path (Join-Path $HOME ".amp"))) {
+        $script:DetectedAgents.Add("amp:Sourcegraph Amp")
+    }
+
+    # ── VS Code / Cursor extensions ──────────────────────────────────────────────
+
+    # Cline
+    $clineAdded = $false
     foreach ($extDir in $extDirs) {
-        if ((Test-Path $extDir) -and (Get-ChildItem $extDir -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "saoudrizwan.claude-dev*" })) {
-            $script:DetectedAgents.Add("cline:Cline")
-            break
+        if (-not $clineAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "saoudrizwan.claude-dev*" })) {
+            $script:DetectedAgents.Add("cline:Cline"); $clineAdded = $true
         }
     }
 
     # Continue
+    $continueAdded = $false
     foreach ($extDir in $extDirs) {
-        if ((Test-Path $extDir) -and (Get-ChildItem $extDir -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "continue.continue*" })) {
-            $script:DetectedAgents.Add("continue:Continue")
-            break
+        if (-not $continueAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "continue.continue*" })) {
+            $script:DetectedAgents.Add("continue:Continue"); $continueAdded = $true
         }
     }
 
     # Roo
+    $rooAdded = $false
     foreach ($extDir in $extDirs) {
-        if ((Test-Path $extDir) -and (Get-ChildItem $extDir -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "rooveterinaryinc.roo-cline*" })) {
-            $script:DetectedAgents.Add("roo:Roo")
-            break
+        if (-not $rooAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "rooveterinaryinc.roo-cline*" })) {
+            $script:DetectedAgents.Add("roo:Roo"); $rooAdded = $true
         }
     }
+
+    # ── AI coding platforms ──────────────────────────────────────────────────────
 
     # OpenHands
     if ((Test-Command "openhands") -or (Test-Path (Join-Path $HOME ".openhands"))) {
         $script:DetectedAgents.Add("openhands:OpenHands")
     }
 
-    # Codex
-    if ((Test-Command "codex") -or (Test-Path (Join-Path $HOME ".codex"))) {
-        $script:DetectedAgents.Add("codex:Codex")
+    # Devin
+    if (Test-Path (Join-Path $HOME ".devin")) {
+        $script:DetectedAgents.Add("devin:Devin")
+    }
+
+    # Kode
+    if ((Test-Command "kode") -or (Test-Path (Join-Path $HOME ".kode"))) {
+        $script:DetectedAgents.Add("kode:Kode")
+    }
+
+    # Aide
+    if ((Test-Command "aide") -or (Test-Path (Join-Path $HOME ".aide"))) {
+        $script:DetectedAgents.Add("aide:Aide")
     }
 
     if ($script:DetectedAgents.Count -eq 0) {
-        Write-Warn "No AI coding agents detected. Configure MCP manually — see $InstallDir\mcp.example.json"
+        Write-Warn "No AI coding agents detected."
+        Write-Warn "Install MCP manually using mcp.example.json, or run: sentinel init"
         return
     }
 
@@ -248,8 +322,9 @@ function Invoke-List {
     Write-Host ""
     Detect-Agents
     Write-Host ""
-    Write-Host "Supported: Claude Code, Cursor, Windsurf, VS Code, JetBrains, Cline, Continue, Roo, OpenHands, Codex"
-    Write-Host "MCP examples: $InstallDir\mcp.example.json (after install)"
+    Write-Host "Supported: Claude Code, Gemini CLI, Codex CLI, Copilot CLI, Aider, v0," -ForegroundColor Cyan
+    Write-Host "           Cursor, Windsurf, VS Code, JetBrains, Amp, Cline, Continue," -ForegroundColor Cyan
+    Write-Host "           Roo, OpenHands, Devin, Kode, Aide — plus any skills-CLI-compatible agent." -ForegroundColor Cyan
 }
 
 # ─── MCP registration ─────────────────────────────────────────────────────────
@@ -259,7 +334,7 @@ function Register-Mcp {
     if ($NoMcp) { return }
     if ($script:DetectedAgents.Count -eq 0) { Detect-Agents }
 
-    $registered = [System.Collections.Generic.List[string]]::new()
+    $registered  = [System.Collections.Generic.List[string]]::new()
     $manualAgents = [System.Collections.Generic.List[string]]::new()
 
     foreach ($entry in $script:DetectedAgents) {
@@ -284,12 +359,40 @@ function Register-Mcp {
                             $manualAgents.Add($agentLabel)
                         }
                     }
-                } else {
-                    $manualAgents.Add($agentLabel)
-                }
+                } else { $manualAgents.Add($agentLabel) }
             }
-            default {
-                $manualAgents.Add($agentLabel)
+            "gemini" {
+                if (Test-Command "gemini") {
+                    if ($DryRun) {
+                        Write-Host "  [dry-run] gemini extensions install https://github.com/Wembie/Sentinel" -ForegroundColor Yellow
+                        $registered.Add("$agentLabel (dry-run)")
+                    } else {
+                        try {
+                            & gemini extensions install "https://github.com/Wembie/Sentinel" 2>$null
+                            Write-Info "Gemini CLI: extension installed."
+                            $registered.Add($agentLabel)
+                        } catch {
+                            Write-Warn "Gemini CLI: auto-install failed."
+                            $manualAgents.Add($agentLabel)
+                        }
+                    }
+                } else { $manualAgents.Add($agentLabel) }
+            }
+            default { $manualAgents.Add($agentLabel) }
+        }
+    }
+
+    # Skills CLI fallback
+    if (-not $Minimal -and -not $Only -and (Test-Command "npx")) {
+        Write-Info "Running skills CLI registration (covers all skills-compatible agents)..."
+        if ($DryRun) {
+            Write-Host "  [dry-run] npx -y skills add https://github.com/Wembie/Sentinel" -ForegroundColor Yellow
+        } else {
+            try {
+                npx -y skills add "https://github.com/Wembie/Sentinel" 2>$null
+                Write-Info "Skills CLI: SENTINEL registered."
+            } catch {
+                Write-Warn "Skills CLI registration failed (non-fatal)."
             }
         }
     }
@@ -312,7 +415,28 @@ function Register-Mcp {
 "@
         Write-Host ""
         Write-Host "  See $InstallPath\mcp.example.json for editor-specific examples." -ForegroundColor Cyan
-        Write-Host "  Or run: sentinel init  (in any project root) to drop rule files for all detected editors." -ForegroundColor Cyan
+        Write-Host "  Or run: sentinel init  (in any project root) to drop rule files." -ForegroundColor Cyan
+    }
+}
+
+# ─── hooks installation ───────────────────────────────────────────────────────
+
+function Install-Hooks {
+    param([string]$InstallPath)
+    $hooksInstaller = Join-Path $InstallPath "hooks\install.ps1"
+    if (-not (Test-Path $hooksInstaller)) {
+        Write-Warn "Hooks installer not found at $hooksInstaller — skipping."
+        return
+    }
+    Write-Info "Installing Claude Code hooks..."
+    if ($DryRun) {
+        Write-Host "  [dry-run] & `"$hooksInstaller`" -DryRun" -ForegroundColor Yellow
+    } else {
+        try {
+            & $hooksInstaller
+        } catch {
+            Write-Warn "Hooks installation failed (non-fatal): $_"
+        }
     }
 }
 
@@ -330,15 +454,14 @@ function Invoke-Uninstall {
     } else {
         Write-Warn "Installation directory not found: $InstallDir"
     }
-    $wrapperCmd = Join-Path $BinDir "sentinel-mcp.cmd"
-    $wrapperPs1 = Join-Path $BinDir "sentinel-mcp.ps1"
-    foreach ($f in @($wrapperCmd, $wrapperPs1)) {
-        if (Test-Path $f) {
+    foreach ($f in @("sentinel-mcp.cmd", "sentinel-mcp.ps1")) {
+        $p = Join-Path $BinDir $f
+        if (Test-Path $p) {
             if ($DryRun) {
-                Write-Host "  [dry-run] Remove-Item $f" -ForegroundColor Yellow
+                Write-Host "  [dry-run] Remove-Item $p" -ForegroundColor Yellow
             } else {
-                Remove-Item $f
-                Write-Info "Removed $f"
+                Remove-Item $p
+                Write-Info "Removed $p"
             }
         }
     }
@@ -428,13 +551,29 @@ function Invoke-Install {
     Detect-Agents
     Register-Mcp -InstallPath $InstallDir
 
+    # Optional: install Claude Code hooks
+    if ($WithHooks) {
+        Install-Hooks -InstallPath $InstallDir
+    }
+
+    # Optional: run sentinel init in current directory
+    if ($WithInit) {
+        Write-Info "Running sentinel init in current directory..."
+        if ($DryRun) {
+            Write-Host "  [dry-run] uv run --project $InstallDir sentinel init ." -ForegroundColor Yellow
+        } else {
+            uv run --project $InstallDir sentinel init .
+        }
+    }
+
     Write-Host ""
     Write-Host "SENTINEL installed successfully!" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Start MCP server:   sentinel-mcp"
-    Write-Host "  Run audit:          uv run --project `"$InstallDir`" sentinel audit .\my-project"
-    Write-Host "  List rules:         uv run --project `"$InstallDir`" sentinel rules"
-    Write-Host "  Per-project setup:  uv run --project `"$InstallDir`" sentinel init"
+    Write-Host "  Start MCP server:    sentinel-mcp"
+    Write-Host "  Run audit:           uv run --project `"$InstallDir`" sentinel audit .\"
+    Write-Host "  List rules:          uv run --project `"$InstallDir`" sentinel rules"
+    Write-Host "  Per-project setup:   uv run --project `"$InstallDir`" sentinel init"
+    Write-Host "  Install hooks:       & `"$InstallDir\hooks\install.ps1`""
     Write-Host ""
 }
 

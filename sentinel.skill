@@ -1,0 +1,34 @@
+---
+name: sentinel
+version: "0.1.1"
+description: AI-powered contextual security auditing — red-team-grade SAST, taint flow, attack graphs, exploit chains
+author: Wembie
+repo: https://github.com/Wembie/Sentinel
+license: MIT
+mcp_server:
+  command: uv
+  args: ["run", "--project", "~/.sentinel", "python", "-m", "sentinel.mcp"]
+  transport: stdio
+install:
+  bash: "curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash"
+  powershell: "irm https://raw.githubusercontent.com/Wembie/Sentinel/main/install.ps1 | iex"
+skills:
+  - skills/sentinel-audit/SKILL.md
+  - skills/sentinel-surface/SKILL.md
+  - skills/sentinel-trace/SKILL.md
+  - skills/sentinel-attack-graph/SKILL.md
+  - skills/sentinel-logic/SKILL.md
+  - skills/sentinel-review/SKILL.md
+  - skills/sentinel-diff/SKILL.md
+  - skills/sentinel-exploit-chain/SKILL.md
+  - skills/sentinel-harden/SKILL.md
+agent_files:
+  - CLAUDE.md
+  - AGENTS.md
+  - GEMINI.md
+  - .cursor/rules/sentinel.mdc
+  - .windsurf/rules/sentinel.md
+  - .clinerules/sentinel.md
+  - .github/copilot-instructions.md
+  - .codex/instructions.md
+---

@@ -1,0 +1,1 @@
+description = "Audit the security impact of the current git diff or a PR — identifies new vulnerabilities introduced by recent changes"
