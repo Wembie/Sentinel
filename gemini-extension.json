@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "0.1.3",
+  "version": "1.0.0",
   "description": "AI-powered contextual security auditing platform. Performs offensive-minded SAST: taint flow tracing, attack graph generation, exploit chain narratives, and hardening checklists.",
   "author": "Wembie",
   "repo": "https://github.com/Wembie/Sentinel",
