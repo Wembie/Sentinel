@@ -24,7 +24,8 @@ jobs:
       - name: Check if VERSION changed
         id: ver
         run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+          NULL_SHA="0000000000000000000000000000000000000000"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "${NULL_SHA}" ]; then
             RANGE="${{ github.event.before }}..${{ github.sha }}"
           else
             RANGE="HEAD~1..HEAD"
