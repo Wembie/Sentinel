@@ -33,16 +33,6 @@ dependencies = [
     "mcp[cli]>=1.0.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=0.23.0",
-    "ruff>=0.5.0",
-    "mypy>=1.10.0",
-    "black>=24.0.0",
-    "flake8>=7.0.0",
-]
-
 [project.scripts]
 sentinel = "sentinel.cli:app"
 sentinel-mcp = "sentinel.mcp:run"
@@ -56,10 +46,11 @@ pattern = "^(?P<version>[^\n]+)"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
     "black>=24.0.0",
