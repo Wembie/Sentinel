@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           python scripts/sync_version.py
-          if ! git diff --quiet -- .claude-plugin/plugin.json .agents/plugins/marketplace.json gemini-extension.json sentinel.skill; then
+          if ! git diff --quiet; then
             echo "::error::Static manifests are out of sync with VERSION. Run: python scripts/sync_version.py and commit the updates."
             exit 1
           fi
