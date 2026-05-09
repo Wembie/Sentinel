@@ -46,8 +46,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Sync version to static manifests
-        run: python scripts/sync_version.py
+      - name: Ensure static manifests are version-synced
+        shell: bash
+        run: |
+          python scripts/sync_version.py --dry-run | tee /tmp/version-sync.txt
+          if ! grep -q "0 file(s) would be updated." /tmp/version-sync.txt; then
+            echo "::error::Static manifests are out of sync with VERSION. Run: python scripts/sync_version.py and commit the updates."
+            exit 1
+          fi
 
       - name: Build package
         run: uv build
