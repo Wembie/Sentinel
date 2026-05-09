@@ -58,9 +58,7 @@ class OpenAIProvider:
             if hasattr(response_model, "model_json_schema")
             else {}
         )
-        structured_system = (
-            f"{system or ''}\n\nRespond ONLY with valid JSON matching:\n{json.dumps(schema, indent=2)}"
-        )
+        structured_system = f"{system or ''}\n\nRespond ONLY with valid JSON matching:\n{json.dumps(schema, indent=2)}"
         response = await self.complete(
             messages=messages,
             system=structured_system,

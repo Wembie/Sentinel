@@ -22,9 +22,9 @@ _SQL_PATTERNS = [
 _CMD_PATTERNS = [
     re.compile(r'os\.system\s*\(\s*f["\']', re.IGNORECASE),
     re.compile(r'os\.system\s*\(\s*["\'].*%[sd]', re.IGNORECASE),
-    re.compile(r'os\.system\s*\(\s*[^\)]*\+', re.IGNORECASE),
+    re.compile(r"os\.system\s*\(\s*[^\)]*\+", re.IGNORECASE),
     re.compile(r'subprocess\.\w+\s*\(\s*f["\']', re.IGNORECASE),
-    re.compile(r'shell\s*=\s*True', re.IGNORECASE),
+    re.compile(r"shell\s*=\s*True", re.IGNORECASE),
     re.compile(r'Popen\s*\(\s*f["\']', re.IGNORECASE),
 ]
 

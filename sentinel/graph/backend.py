@@ -52,13 +52,13 @@ class NetworkXBackend:
         return [self._node_data[n] for n in self._graph.successors(node_id) if n in self._node_data]
 
     def predecessors(self, node_id: str) -> list[GraphNode]:
-        return [self._node_data[n] for n in self._graph.predecessors(node_id) if n in self._node_data]
+        return [
+            self._node_data[n] for n in self._graph.predecessors(node_id) if n in self._node_data
+        ]
 
     def find_paths(self, source: str, target: str, max_length: int = 10) -> list[list[str]]:
         try:
-            return list(
-                self._nx.all_simple_paths(self._graph, source, target, cutoff=max_length)
-            )
+            return list(self._nx.all_simple_paths(self._graph, source, target, cutoff=max_length))
         except (self._nx.NodeNotFound, self._nx.NetworkXError):
             return []
 

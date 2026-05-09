@@ -10,17 +10,20 @@ _ANALYZER = "sentinel.rules.builtin.auth"
 
 # Hardcoded credential patterns
 _HARDCODED_SECRET_PATTERNS = [
-    re.compile(r'(password|passwd|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{4,}["\']', re.IGNORECASE),
+    re.compile(
+        r'(password|passwd|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{4,}["\']',
+        re.IGNORECASE,
+    ),
     re.compile(r'(AWS_SECRET|AWS_ACCESS_KEY|PRIVATE_KEY)\s*=\s*["\'][^"\']+["\']', re.IGNORECASE),
 ]
 
 # Disabled security controls
 _DISABLED_AUTH_PATTERNS = [
-    re.compile(r'verify\s*=\s*False', re.IGNORECASE),
-    re.compile(r'ssl_verify\s*=\s*False', re.IGNORECASE),
-    re.compile(r'check_hostname\s*=\s*False', re.IGNORECASE),
-    re.compile(r'ALLOW_ALL_ORIGINS\s*=\s*True', re.IGNORECASE),
-    re.compile(r'DEBUG\s*=\s*True', re.IGNORECASE),
+    re.compile(r"verify\s*=\s*False", re.IGNORECASE),
+    re.compile(r"ssl_verify\s*=\s*False", re.IGNORECASE),
+    re.compile(r"check_hostname\s*=\s*False", re.IGNORECASE),
+    re.compile(r"ALLOW_ALL_ORIGINS\s*=\s*True", re.IGNORECASE),
+    re.compile(r"DEBUG\s*=\s*True", re.IGNORECASE),
 ]
 
 
@@ -70,9 +73,19 @@ class HardcodedCredentialRule(BaseRule):
                             "extracts the credential from source or git history, and authenticates as the service."
                         ),
                         exploit_chain=[
-                            ExploitChainStep(step=1, component="VCS", action="Clone or access repository"),
-                            ExploitChainStep(step=2, component=rel_path, action=f"Extract credential at line {line_no}"),
-                            ExploitChainStep(step=3, component="Target Service", action="Authenticate using extracted secret"),
+                            ExploitChainStep(
+                                step=1, component="VCS", action="Clone or access repository"
+                            ),
+                            ExploitChainStep(
+                                step=2,
+                                component=rel_path,
+                                action=f"Extract credential at line {line_no}",
+                            ),
+                            ExploitChainStep(
+                                step=3,
+                                component="Target Service",
+                                action="Authenticate using extracted secret",
+                            ),
                         ],
                         potential_impact="Service impersonation, data access, lateral movement to connected systems",
                         blast_radius="All resources the credential grants access to",
@@ -144,10 +157,24 @@ class DisabledTLSVerificationRule(BaseRule):
                             "Client accepts it without verification, attacker reads/modifies all traffic."
                         ),
                         exploit_chain=[
-                            ExploitChainStep(step=1, component="Network", action="ARP spoofing or rogue AP"),
-                            ExploitChainStep(step=2, component="TLS Handshake", action="Attacker presents forged cert"),
-                            ExploitChainStep(step=3, component=rel_path, action="Client accepts cert (verify=False)"),
-                            ExploitChainStep(step=4, component="Traffic", action="Attacker reads plaintext credentials/data"),
+                            ExploitChainStep(
+                                step=1, component="Network", action="ARP spoofing or rogue AP"
+                            ),
+                            ExploitChainStep(
+                                step=2,
+                                component="TLS Handshake",
+                                action="Attacker presents forged cert",
+                            ),
+                            ExploitChainStep(
+                                step=3,
+                                component=rel_path,
+                                action="Client accepts cert (verify=False)",
+                            ),
+                            ExploitChainStep(
+                                step=4,
+                                component="Traffic",
+                                action="Attacker reads plaintext credentials/data",
+                            ),
                         ],
                         potential_impact="Credential theft, session hijacking, data interception",
                         blast_radius="All data transmitted over affected connections",

@@ -1,29 +1,3 @@
 [flake8]
 max-line-length = 100
-extend-ignore =
-    # whitespace before ':'  (conflicts with black)
-    E203,
-    # line break before binary operator  (conflicts with black)
-    W503,
-    # assert statements in tests
-    S101,
-    # subprocess calls with shell=False are safe (we explicitly use list args)
-    S603,
-    # start process with partial path (uv, git calls)
-    S607,
-    # hardcoded SQL string detection (handled by SENTINEL rules, not flake8)
-    S608
-
-per-file-ignores =
-    tests/*: S101, S106, S105
-
-exclude =
-    .git,
-    __pycache__,
-    .venv,
-    venv,
-    build,
-    dist,
-    *.egg-info,
-    .mypy_cache,
-    .ruff_cache
+extend-ignore = E501

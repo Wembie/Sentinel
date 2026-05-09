@@ -85,7 +85,9 @@ class GraphBuilder:
                         line=start_line + 1,
                     )
                 )
-                self._backend.add_edge(GraphEdge(source=parent_id, target=fn_id, type=EdgeType.CALLS))
+                self._backend.add_edge(
+                    GraphEdge(source=parent_id, target=fn_id, type=EdgeType.CALLS)
+                )
                 parent_id = fn_id
 
         elif node_type == "class_definition":
@@ -113,5 +115,6 @@ class GraphBuilder:
     def _first_child_text(self, node: dict[str, Any], child_type: str) -> str | None:
         for child in node.get("children", []):
             if child.get("type") == child_type:
-                return child.get("text")
+                text = child.get("text")
+                return str(text) if text is not None else None
         return None

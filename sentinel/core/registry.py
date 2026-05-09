@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from typing import Any, Generic, TypeVar
+from collections.abc import Callable
+from typing import Any, Generic, TypeVar, cast
 
 T = TypeVar("T")
 
@@ -14,7 +15,7 @@ class Registry(Generic[T]):
         self.name = name
         self._entries: dict[str, type[Any]] = {}
 
-    def register(self, name: str | None = None):
+    def register(self, name: str | None = None) -> Callable[[type[Any]], type[Any]]:
         def decorator(cls: type[Any]) -> type[Any]:
             key = name or cls.__name__.lower()
             self._entries[key] = cls
@@ -35,10 +36,10 @@ class Registry(Generic[T]):
         cls = self.get(name)
         if cls is None:
             return None
-        return cls(*args, **kwargs)  # type: ignore[return-value]
+        return cast(T, cls(*args, **kwargs))
 
     def instantiate_all(self, *args: Any, **kwargs: Any) -> list[T]:
-        return [cls(*args, **kwargs) for cls in self._entries.values()]  # type: ignore[return-value]
+        return [cast(T, cls(*args, **kwargs)) for cls in self._entries.values()]
 
     def load_from_module(self, module_path: str, base_class: type[Any]) -> None:
         module = importlib.import_module(module_path)

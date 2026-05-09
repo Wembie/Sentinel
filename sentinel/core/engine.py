@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -10,7 +10,6 @@ import structlog
 from sentinel.config import Settings
 from sentinel.core.context import AuditContext
 from sentinel.core.pipeline import AuditPipeline
-from sentinel.core.registry import Registry
 from sentinel.graph.builder import GraphBuilder
 from sentinel.llm.base import LLMProvider
 from sentinel.llm.router import build_provider
@@ -71,7 +70,7 @@ class AuditEngine:
         result = AuditResult(
             request_id=request.id,
             status=AuditStatus.RUNNING,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         ctx = AuditContext(request)
@@ -88,7 +87,7 @@ class AuditEngine:
             ctx.add_error(f"Audit failed: {exc}")
         finally:
             elapsed = time.monotonic() - t0
-            result.completed_at = datetime.now(timezone.utc)
+            result.completed_at = datetime.now(UTC)
             result.findings = sorted(ctx.findings, key=lambda f: f.risk_score, reverse=True)
             result.errors = ctx.errors
             result.summary = AuditSummary.from_findings(
@@ -146,7 +145,7 @@ class AuditEngine:
             *[rule.match(ctx) for rule in self._rule_loader.rules],
             return_exceptions=True,
         )
-        for rule, result in zip(self._rule_loader.rules, results):
+        for rule, result in zip(self._rule_loader.rules, results, strict=True):
             if isinstance(result, BaseException):
                 ctx.add_error(f"Rule {rule.metadata.id} raised: {result}")
             else:
