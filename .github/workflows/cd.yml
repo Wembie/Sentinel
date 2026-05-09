@@ -24,11 +24,17 @@ jobs:
       - name: Check if VERSION changed
         id: ver
         run: |
-          if git diff HEAD~1 HEAD -- VERSION | grep -q '^+[^+]'; then
-            echo "changed=true"  >> $GITHUB_OUTPUT
+          NULL_SHA="0000000000000000000000000000000000000000"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "${NULL_SHA}" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE="HEAD~1..HEAD"
+          fi
+          if git diff --quiet "${RANGE}" -- VERSION; then
+            echo "changed=false" >> $GITHUB_OUTPUT
             echo "version=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
           else
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=true"  >> $GITHUB_OUTPUT
             echo "version=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
           fi
 
@@ -98,4 +104,3 @@ jobs:
           name: SENTINEL ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: dist/*
-
