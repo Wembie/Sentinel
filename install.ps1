@@ -2,525 +2,305 @@
 .SYNOPSIS
     SENTINEL Installer — Windows (PowerShell 5.1+)
 .DESCRIPTION
-    Installs SENTINEL, registers MCP servers, and optionally installs Claude Code hooks.
-.PARAMETER Dev
-    Clone repository and install in editable mode (requires git).
-.PARAMETER Upgrade
-    Pull latest changes and re-sync dependencies.
-.PARAMETER Uninstall
-    Remove SENTINEL installation.
-.PARAMETER DryRun
-    Print all actions without executing anything.
-.PARAMETER List
-    List detected agents and exit.
-.PARAMETER NoMcp
-    Skip MCP auto-registration.
-.PARAMETER WithHooks
-    Install Claude Code session hooks (auto-activates SENTINEL at session start).
-.PARAMETER WithInit
-    Run `sentinel init` in the current directory after install.
-.PARAMETER All
-    Enable WithHooks and MCP registration for all detected agents.
-.PARAMETER Minimal
-    Install package only; skip MCP registration, hooks, and init.
-.PARAMETER Only
-    Register with a specific agent only (e.g. -Only claude).
+    Detects AI coding agents on your machine and registers SENTINEL as an MCP
+    server for each one. Safe to re-run — idempotent per agent.
 .EXAMPLE
     irm https://raw.githubusercontent.com/Wembie/Sentinel/main/install.ps1 | iex
     .\install.ps1 -DryRun -List
     .\install.ps1 -All
-    .\install.ps1 -WithHooks
+    .\install.ps1 -Only claude
 #>
 param(
     [switch]$Dev,
     [switch]$Upgrade,
     [switch]$Uninstall,
     [switch]$DryRun,
-    [switch]$List,
-    [switch]$NoMcp,
+    [switch]$Force,
+    [switch]$SkipSkills,
     [switch]$WithHooks,
     [switch]$WithInit,
     [switch]$All,
     [switch]$Minimal,
-    [string]$Only = ""
+    [switch]$List,
+    [switch]$NoColor,
+    [string[]]$Only = @()
 )
 
 $ErrorActionPreference = "Stop"
 
-# --all implies WithHooks
-if ($All) { $WithHooks = $true }
-# --minimal implies NoMcp
-if ($Minimal) { $NoMcp = $true }
+# ── Constants ──────────────────────────────────────────────────────────────
+$Repo        = "Wembie/Sentinel"
+$RepoUrl     = "https://github.com/$Repo"
+$RepoArchive = "https://github.com/$Repo/archive/refs/heads/main.zip"
+$InstallDir  = if ($env:SENTINEL_HOME) { $env:SENTINEL_HOME } else { Join-Path $HOME ".sentinel" }
+$BinDir      = if ($env:SENTINEL_BIN)  { $env:SENTINEL_BIN  } else { Join-Path $HOME ".local\bin" }
+$MinPyMajor  = 3
+$MinPyMinor  = 11
 
-# ─── configuration ────────────────────────────────────────────────────────────
+# ── Flag resolution ────────────────────────────────────────────────────────
+if ($All -and $Minimal) { Write-Error "error: -All and -Minimal are mutually exclusive"; exit 2 }
+if ($All)     { $WithHooks = $true; $WithInit = $true }
+if ($Minimal) { $WithHooks = $false; $WithInit = $false; $SkipSkills = $true }
+# Default: WithHooks ON (matches Caveman pattern)
+if (-not $Minimal -and -not $WithHooks) { $WithHooks = $true }
 
-$RepoUrl      = "https://github.com/Wembie/Sentinel"
-$RepoArchive  = "https://github.com/Wembie/Sentinel/archive/refs/heads/main.zip"
-$InstallDir   = if ($env:SENTINEL_HOME) { $env:SENTINEL_HOME } else { Join-Path $HOME ".sentinel" }
-$BinDir       = if ($env:SENTINEL_BIN)  { $env:SENTINEL_BIN  } else { Join-Path $HOME ".local\bin" }
-$MinPyMajor   = 3
-$MinPyMinor   = 11
+# ── Result trackers ────────────────────────────────────────────────────────
+$InstalledIds  = [System.Collections.Generic.List[string]]::new()
+$SkippedIds    = [System.Collections.Generic.List[string]]::new()
+$SkippedWhy    = [System.Collections.Generic.List[string]]::new()
+$FailedIds     = [System.Collections.Generic.List[string]]::new()
+$FailedWhy     = [System.Collections.Generic.List[string]]::new()
+$DetectedCount = 0
 
-# ─── helpers ──────────────────────────────────────────────────────────────────
-
-function Write-Info  { param([string]$Msg) Write-Host "[SENTINEL] $Msg" -ForegroundColor Green  }
-function Write-Warn  { param([string]$Msg) Write-Host "[SENTINEL] $Msg" -ForegroundColor Yellow }
-function Write-Err   { param([string]$Msg) Write-Host "[SENTINEL ERROR] $Msg" -ForegroundColor Red }
-function Write-Cyan  { param([string]$Msg) Write-Host $Msg -ForegroundColor Cyan }
-function Fail        { param([string]$Msg) Write-Err $Msg; exit 1 }
+# ── Color helpers ──────────────────────────────────────────────────────────
+function Write-Say  { param([string]$M) Write-Host $M -ForegroundColor Blue }
+function Write-Note { param([string]$M) Write-Host $M -ForegroundColor DarkGray }
+function Write-Warn { param([string]$M) Write-Host $M -ForegroundColor Yellow }
+function Write-Err  { param([string]$M) Write-Host $M -ForegroundColor Red }
+function Write-Ok   { param([string]$M) Write-Host $M -ForegroundColor Green }
 
 function Invoke-Cmd {
-    param([string]$Cmd, [string]$Desc = "")
-    if ($DryRun) {
-        Write-Host "  [dry-run] $Cmd" -ForegroundColor Yellow
-    } else {
-        Invoke-Expression $Cmd
-    }
+    param([string]$Display, [scriptblock]$Action)
+    if ($DryRun) { Write-Note "  would run: $Display" }
+    else { Write-Host "  $ $Display"; & $Action }
 }
 
-function Test-Command {
+# ── Helpers ────────────────────────────────────────────────────────────────
+function Test-Want {
+    param([string]$Id)
+    if ($Only.Count -eq 0) { return $true }
+    return $Only -contains $Id
+}
+
+function Test-Cmd {
     param([string]$Cmd)
-    $null = Get-Command $Cmd -ErrorAction SilentlyContinue
-    return $?
+    return ($null -ne (Get-Command $Cmd -ErrorAction SilentlyContinue))
 }
 
+function Test-NodeNpx {
+    if ((Test-Cmd "node") -and (Test-Cmd "npx")) { return $true }
+    Write-Warn "  node + npx required — install Node.js (https://nodejs.org) and re-run."
+    return $false
+}
+
+function Add-Installed { param([string]$Id) $InstalledIds.Add($Id) }
+function Add-Skipped   { param([string]$Id, [string]$Why) $SkippedIds.Add($Id); $SkippedWhy.Add($Why) }
+function Add-Failed    { param([string]$Id, [string]$Why) $FailedIds.Add($Id); $FailedWhy.Add($Why) }
+
+# ── Detection helpers ──────────────────────────────────────────────────────
+function Test-VSCodeExt {
+    param([string]$Needle)
+    $roots = @(
+        (Join-Path $HOME ".vscode\extensions"),
+        (Join-Path $HOME ".cursor\extensions"),
+        (Join-Path $HOME ".windsurf\extensions")
+    )
+    foreach ($r in $roots) {
+        if ((Test-Path $r) -and (Get-ChildItem $r -EA SilentlyContinue | Where-Object { $_.Name -ilike "*$Needle*" })) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-JetbrainsPlugin {
+    param([string]$Needle)
+    $roots = @(
+        (Join-Path $env:APPDATA "JetBrains"),
+        (Join-Path $HOME ".config\JetBrains")
+    )
+    foreach ($r in $roots) {
+        if ((Test-Path $r) -and (Get-ChildItem $r -Recurse -Depth 4 -Directory -EA SilentlyContinue | Where-Object { $_.Name -ilike "*$Needle*" })) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# Parse a detection spec "command:foo||dir:~/.x" and return true if any clause matches.
+function Test-DetectMatch {
+    param([string]$Spec)
+    $clauses = $Spec -split '\|\|'
+    foreach ($clause in $clauses) {
+        $clause = $clause.Trim()
+        if ($clause -match '^command:(.+)$') {
+            if (Test-Cmd $Matches[1]) { return $true }
+        } elseif ($clause -match '^dir:(.+)$') {
+            $expanded = $Matches[1] -replace '^\$HOME', $HOME
+            if (Test-Path $expanded -PathType Container) { return $true }
+        } elseif ($clause -match '^file:(.+)$') {
+            $expanded = $Matches[1] -replace '^\$HOME', $HOME
+            if (Test-Path $expanded -PathType Leaf) { return $true }
+        } elseif ($clause -match '^vscode-ext:(.+)$') {
+            if (Test-VSCodeExt $Matches[1]) { return $true }
+        } elseif ($clause -match '^jetbrains-plugin:(.+)$') {
+            if (Test-JetbrainsPlugin $Matches[1]) { return $true }
+        }
+    }
+    return $false
+}
+
+# ── Provider matrix ────────────────────────────────────────────────────────
+$Providers = @(
+    # id, label, skills-profile, detect-spec
+    [pscustomobject]@{ Id="claude";      Label="Claude Code";          Profile="";              Detect="command:claude||dir:$HOME\.claude" }
+    [pscustomobject]@{ Id="gemini";      Label="Gemini CLI";           Profile="";              Detect="command:gemini||dir:$HOME\.gemini" }
+    [pscustomobject]@{ Id="codex";       Label="Codex CLI";            Profile="codex";         Detect="command:codex||dir:$HOME\.codex" }
+    [pscustomobject]@{ Id="cursor";      Label="Cursor";               Profile="cursor";        Detect="command:cursor||dir:$HOME\.cursor" }
+    [pscustomobject]@{ Id="windsurf";    Label="Windsurf";             Profile="windsurf";      Detect="command:windsurf||dir:$HOME\.codeium\windsurf||dir:$HOME\.windsurf" }
+    [pscustomobject]@{ Id="cline";       Label="Cline";                Profile="cline";         Detect="vscode-ext:cline" }
+    [pscustomobject]@{ Id="copilot";     Label="GitHub Copilot";       Profile="github-copilot"; Detect="command:gh" }
+    [pscustomobject]@{ Id="continue";    Label="Continue";             Profile="continue";      Detect="vscode-ext:continue.continue||vscode-ext:continue" }
+    [pscustomobject]@{ Id="kilo";        Label="Kilo Code";            Profile="kilo";          Detect="vscode-ext:kilocode||dir:$HOME\.kilocode" }
+    [pscustomobject]@{ Id="roo";         Label="Roo Code";             Profile="roo";           Detect="vscode-ext:roo||vscode-ext:rooveterinaryinc.roo-cline" }
+    [pscustomobject]@{ Id="augment";     Label="Augment Code";         Profile="augment";       Detect="vscode-ext:augment||jetbrains-plugin:augment" }
+    [pscustomobject]@{ Id="aider-desk";  Label="Aider Desk";           Profile="aider-desk";    Detect="command:aider||dir:$HOME\.aider-desk" }
+    [pscustomobject]@{ Id="amp";         Label="Sourcegraph Amp";      Profile="amp";           Detect="command:amp" }
+    [pscustomobject]@{ Id="bob";         Label="IBM Bob";              Profile="bob";           Detect="command:bob||dir:$HOME\.bob" }
+    [pscustomobject]@{ Id="crush";       Label="Crush";                Profile="crush";         Detect="command:crush||dir:$HOME\.config\crush" }
+    [pscustomobject]@{ Id="devin";       Label="Devin";                Profile="devin";         Detect="command:devin||dir:$HOME\.config\devin" }
+    [pscustomobject]@{ Id="droid";       Label="Droid (Factory)";      Profile="droid";         Detect="command:droid||dir:$HOME\.factory" }
+    [pscustomobject]@{ Id="forgecode";   Label="ForgeCode";            Profile="forgecode";     Detect="command:forge||dir:$HOME\.forge" }
+    [pscustomobject]@{ Id="goose";       Label="Block Goose";          Profile="goose";         Detect="command:goose||dir:$HOME\.config\goose" }
+    [pscustomobject]@{ Id="iflow";       Label="iFlow CLI";            Profile="iflow-cli";     Detect="command:iflow||dir:$HOME\.iflow" }
+    [pscustomobject]@{ Id="junie";       Label="JetBrains Junie";      Profile="junie";         Detect="dir:$HOME\.junie||jetbrains-plugin:junie" }
+    [pscustomobject]@{ Id="kiro";        Label="Kiro CLI";             Profile="kiro-cli";      Detect="command:kiro||dir:$HOME\.kiro" }
+    [pscustomobject]@{ Id="mistral";     Label="Mistral Vibe";         Profile="mistral-vibe";  Detect="command:mistral||dir:$HOME\.vibe" }
+    [pscustomobject]@{ Id="openhands";   Label="OpenHands";            Profile="openhands";     Detect="command:openhands||dir:$HOME\.openhands" }
+    [pscustomobject]@{ Id="opencode";    Label="opencode";             Profile="opencode";      Detect="command:opencode||file:$HOME\.config\opencode\AGENTS.md" }
+    [pscustomobject]@{ Id="qwen";        Label="Qwen Code";            Profile="qwen-code";     Detect="command:qwen||dir:$HOME\.qwen" }
+    [pscustomobject]@{ Id="qoder";       Label="Qoder";                Profile="qoder";         Detect="dir:$HOME\.qoder" }
+    [pscustomobject]@{ Id="rovodev";     Label="Atlassian Rovo Dev";   Profile="rovodev";       Detect="command:rovodev||dir:$HOME\.rovodev" }
+    [pscustomobject]@{ Id="tabnine";     Label="Tabnine CLI";          Profile="tabnine-cli";   Detect="command:tabnine||dir:$HOME\.tabnine" }
+    [pscustomobject]@{ Id="trae";        Label="Trae";                 Profile="trae";          Detect="command:trae||dir:$HOME\.trae" }
+    [pscustomobject]@{ Id="warp";        Label="Warp";                 Profile="warp";          Detect="command:warp||dir:$HOME\.warp" }
+    [pscustomobject]@{ Id="replit";      Label="Replit Agent";         Profile="replit";        Detect="command:replit||dir:$HOME\.replit" }
+    [pscustomobject]@{ Id="antigravity"; Label="Google Antigravity";   Profile="antigravity";   Detect="dir:$HOME\.gemini\antigravity" }
+)
+
+# ── --list mode ────────────────────────────────────────────────────────────
+if ($List) {
+    Write-Say "SENTINEL agent matrix"
+    Write-Host ""
+    Write-Host ("  {0,-14} {1,-22} {2}" -f "ID", "AGENT", "INSTALL MECHANISM")
+    Write-Host ("  {0,-14} {1,-22} {2}" -f "----", "-----", "-----------------")
+    foreach ($p in $Providers) {
+        $mech = if ($p.Profile) { "npx skills add ($($p.Profile))" } else { "native" }
+        if ($p.Id -eq "claude")  { $mech = "claude mcp add" }
+        if ($p.Id -eq "gemini")  { $mech = "gemini extensions install" }
+        Write-Host ("  {0,-14} {1,-22} {2}" -f $p.Id, $p.Label, $mech)
+    }
+    Write-Host ""
+    Write-Note "  Defaults: -WithHooks ON. -All turns on -WithInit. -Minimal turns both off."
+    Write-Host ""
+    exit 0
+}
+
+# ── Core install helpers ───────────────────────────────────────────────────
 function Get-PythonCmd {
-    $candidates = @("python", "python3", "py")
-    foreach ($candidate in $candidates) {
-        if (Test-Command $candidate) {
+    foreach ($candidate in @("python", "python3", "py")) {
+        if (Test-Cmd $candidate) {
             $ver = & $candidate -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
             if ($ver -match "^(\d+)\.(\d+)$") {
-                $major = [int]$Matches[1]
-                $minor = [int]$Matches[2]
-                if ($major -gt $MinPyMajor -or ($major -eq $MinPyMajor -and $minor -ge $MinPyMinor)) {
+                if ([int]$Matches[1] -gt $MinPyMajor -or ([int]$Matches[1] -eq $MinPyMajor -and [int]$Matches[2] -ge $MinPyMinor)) {
                     return $candidate
                 }
             }
         }
     }
-    Fail "Python $MinPyMajor.$MinPyMinor+ required. Download from https://python.org"
+    Write-Err "Python $MinPyMajor.$MinPyMinor+ required — https://python.org"
+    exit 1
 }
 
 function Install-Uv {
-    if (Test-Command "uv") {
-        Write-Info "uv already installed: $(uv --version)"
-        return
-    }
-    Write-Info "Installing uv (Python package manager)..."
-    if ($DryRun) {
-        Write-Host "  [dry-run] Invoke-WebRequest https://astral.sh/uv/install.ps1 | iex" -ForegroundColor Yellow
-        return
-    }
+    if (Test-Cmd "uv") { Write-Note "  uv $(uv --version) already installed"; return }
+    Write-Say "  -> installing uv..."
+    if ($DryRun) { Write-Note "  would run: Invoke-WebRequest https://astral.sh/uv/install.ps1 | iex"; return }
     try {
-        $uvInstall = (Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing).Content
-        Invoke-Expression $uvInstall
+        $uvScript = (Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing).Content
+        Invoke-Expression $uvScript
     } catch {
-        Fail "Failed to install uv: $_`nInstall manually from https://docs.astral.sh/uv/getting-started/installation/"
+        Write-Err "Failed to install uv: $_"; exit 1
     }
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + $env:PATH
-    if (-not (Test-Command "uv")) {
-        Write-Warn "uv installed but not on PATH yet. Restart terminal or add ~/.cargo/bin to PATH."
-    } else {
-        Write-Info "uv installed: $(uv --version)"
-    }
+    if (-not (Test-Cmd "uv")) { Write-Warn "  uv installed but not on PATH yet — restart terminal" }
 }
 
 function Ensure-BinDir {
-    if (-not (Test-Path $BinDir)) {
-        New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    }
+    if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
     $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
     if ($userPath -notlike "*$BinDir*") {
-        Write-Warn "$BinDir is not on PATH. Adding permanently..."
         [System.Environment]::SetEnvironmentVariable("PATH", "$userPath;$BinDir", "User")
         $env:PATH = "$env:PATH;$BinDir"
-        Write-Info "PATH updated. Changes take effect in new terminal sessions."
+        Write-Ok "  PATH updated — effective in new terminal sessions"
     }
 }
 
 function Write-Wrapper {
-    if ($DryRun) {
-        Write-Host "  [dry-run] write sentinel-mcp.cmd and sentinel-mcp.ps1 to $BinDir" -ForegroundColor Yellow
-        return
-    }
-    $wrapperPath = Join-Path $BinDir "sentinel-mcp.cmd"
-    $content = "@echo off`r`nuv run --project `"$InstallDir`" python -m sentinel.mcp %*"
-    Set-Content -Path $wrapperPath -Value $content -Encoding ASCII
-    Write-Info "Wrapper written: $wrapperPath"
-
+    if ($DryRun) { Write-Note "  would write sentinel-mcp.cmd + sentinel-mcp.ps1 to $BinDir"; return }
+    $cmdPath = Join-Path $BinDir "sentinel-mcp.cmd"
+    Set-Content -Path $cmdPath -Value "@echo off`r`nuv run --project `"$InstallDir`" python -m sentinel.mcp %*" -Encoding ASCII
     $ps1Path = Join-Path $BinDir "sentinel-mcp.ps1"
     Set-Content -Path $ps1Path -Value "uv run --project `"$InstallDir`" python -m sentinel.mcp @args" -Encoding UTF8
-    Write-Info "PowerShell shim: $ps1Path"
+    Write-Ok "  wrapper: $cmdPath"
 }
 
-function Test-Install {
-    Write-Info "Validating installation..."
-    if ($DryRun) {
-        Write-Host "  [dry-run] uv run --project $InstallDir python -c 'import sentinel'" -ForegroundColor Yellow
-        return
-    }
-    $result = uv run --project $InstallDir python -c "import sentinel; print('sentinel OK')" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Import validation failed: $result"
-    }
-    Write-Info "Import check passed."
+function Test-SentinelInstall {
+    if ($DryRun) { Write-Note "  would validate: import sentinel"; return }
+    $result = uv run --project $InstallDir python -c "import sentinel; print('OK')" 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Err "import validation failed: $result"; exit 1 }
+    Write-Ok "  import OK"
 }
 
-# ─── agent detection ──────────────────────────────────────────────────────────
+function Write-Config {
+    $configDir  = Join-Path $HOME ".config\sentinel"
+    $configFile = Join-Path $configDir "config.json"
 
-$script:DetectedAgents = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path $configFile) { Write-Note "  config exists at $configFile — skipping"; return }
 
-function Detect-Agents {
-    Write-Info "Scanning for AI coding agents..."
-    $script:DetectedAgents.Clear()
+    $provider = ""; $apiKey = ""
+    if ($env:ANTHROPIC_API_KEY) { $provider = "claude"; $apiKey = $env:ANTHROPIC_API_KEY }
+    elseif ($env:OPENAI_API_KEY) { $provider = "openai"; $apiKey = $env:OPENAI_API_KEY }
+    else { return }
 
-    $extDirs = @(
-        (Join-Path $HOME ".vscode\extensions"),
-        (Join-Path $HOME ".cursor\extensions"),
-        (Join-Path $HOME ".windsurf\extensions")
-    )
+    Write-Say "  -> detected $provider API key — writing config"
+    if ($DryRun) { Write-Note "  would write $configFile (llm_provider=$provider)"; return }
 
-    # ── Native CLI agents ──────────────────────────────────────────────────────
-
-    # Claude Code
-    if ((Test-Command "claude") -or (Test-Path (Join-Path $HOME ".claude"))) {
-        $script:DetectedAgents.Add("claude:Claude Code")
-    }
-
-    # Gemini CLI
-    if ((Test-Command "gemini") -or (Test-Path (Join-Path $HOME ".gemini"))) {
-        $script:DetectedAgents.Add("gemini:Gemini CLI")
-    }
-
-    # OpenAI Codex CLI
-    if ((Test-Command "codex") -or (Test-Path (Join-Path $HOME ".codex"))) {
-        $script:DetectedAgents.Add("codex:Codex CLI")
-    }
-
-    # GitHub Copilot CLI
-    if ((Test-Command "gh") -and (& gh extension list 2>$null | Select-String "gh-copilot")) {
-        $script:DetectedAgents.Add("copilot-cli:GitHub Copilot CLI")
-    }
-
-    # Aider
-    if (Test-Command "aider") {
-        $script:DetectedAgents.Add("aider:Aider")
-    }
-
-    # v0 (Vercel)
-    if (Test-Command "v0") {
-        $script:DetectedAgents.Add("v0:v0")
-    }
-
-    # ── IDE editors ─────────────────────────────────────────────────────────────
-
-    # Cursor
-    if ((Test-Command "cursor") -or (Test-Path (Join-Path $HOME ".cursor"))) {
-        $script:DetectedAgents.Add("cursor:Cursor")
-    }
-
-    # Windsurf
-    $windsurfPaths = @(
-        (Join-Path $HOME ".codeium\windsurf"),
-        (Join-Path $HOME ".windsurf")
-    )
-    $windsurfFound = $false
-    foreach ($p in $windsurfPaths) {
-        if (Test-Path $p) { $windsurfFound = $true; break }
-    }
-    if ($windsurfFound -or (Test-Command "windsurf")) {
-        $script:DetectedAgents.Add("windsurf:Windsurf")
-    }
-
-    # VS Code
-    if (Test-Command "code") {
-        $script:DetectedAgents.Add("vscode:VS Code")
-    }
-
-    # JetBrains
-    $jbPaths = @(
-        (Join-Path $env:APPDATA "JetBrains"),
-        (Join-Path $HOME ".config\JetBrains")
-    )
-    foreach ($jbPath in $jbPaths) {
-        if (Test-Path $jbPath) {
-            $script:DetectedAgents.Add("jetbrains:JetBrains")
-            break
-        }
-    }
-
-    # Sourcegraph Amp
-    if ((Test-Command "amp") -or (Test-Path (Join-Path $HOME ".amp"))) {
-        $script:DetectedAgents.Add("amp:Sourcegraph Amp")
-    }
-
-    # ── VS Code / Cursor extensions ──────────────────────────────────────────────
-
-    # Cline
-    $clineAdded = $false
-    foreach ($extDir in $extDirs) {
-        if (-not $clineAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "saoudrizwan.claude-dev*" })) {
-            $script:DetectedAgents.Add("cline:Cline"); $clineAdded = $true
-        }
-    }
-
-    # Continue
-    $continueAdded = $false
-    foreach ($extDir in $extDirs) {
-        if (-not $continueAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "continue.continue*" })) {
-            $script:DetectedAgents.Add("continue:Continue"); $continueAdded = $true
-        }
-    }
-
-    # Roo
-    $rooAdded = $false
-    foreach ($extDir in $extDirs) {
-        if (-not $rooAdded -and (Test-Path $extDir) -and (Get-ChildItem $extDir -EA SilentlyContinue | Where-Object { $_.Name -like "rooveterinaryinc.roo-cline*" })) {
-            $script:DetectedAgents.Add("roo:Roo"); $rooAdded = $true
-        }
-    }
-
-    # ── AI coding platforms ──────────────────────────────────────────────────────
-
-    # OpenHands
-    if ((Test-Command "openhands") -or (Test-Path (Join-Path $HOME ".openhands"))) {
-        $script:DetectedAgents.Add("openhands:OpenHands")
-    }
-
-    # Devin
-    if (Test-Path (Join-Path $HOME ".devin")) {
-        $script:DetectedAgents.Add("devin:Devin")
-    }
-
-    # Kode
-    if ((Test-Command "kode") -or (Test-Path (Join-Path $HOME ".kode"))) {
-        $script:DetectedAgents.Add("kode:Kode")
-    }
-
-    # Aide
-    if ((Test-Command "aide") -or (Test-Path (Join-Path $HOME ".aide"))) {
-        $script:DetectedAgents.Add("aide:Aide")
-    }
-
-    if ($script:DetectedAgents.Count -eq 0) {
-        Write-Warn "No AI coding agents detected."
-        Write-Warn "Install MCP manually using mcp.example.json, or run: sentinel init"
-        return
-    }
-
-    Write-Info "Detected agents:"
-    foreach ($entry in $script:DetectedAgents) {
-        $label = $entry.Split(":")[1]
-        Write-Host "    OK $label" -ForegroundColor Green
-    }
+    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+    [ordered]@{ llm_provider = $provider; llm_api_key = $apiKey } | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
+    Write-Ok "  config: $configFile"
 }
 
-# ─── list mode ────────────────────────────────────────────────────────────────
-
-function Invoke-List {
-    Write-Host "SENTINEL — Agent Detection" -ForegroundColor Cyan
-    Write-Host ""
-    Detect-Agents
-    Write-Host ""
-    Write-Host "Supported: Claude Code, Gemini CLI, Codex CLI, Copilot CLI, Aider, v0," -ForegroundColor Cyan
-    Write-Host "           Cursor, Windsurf, VS Code, JetBrains, Amp, Cline, Continue," -ForegroundColor Cyan
-    Write-Host "           Roo, OpenHands, Devin, Kode, Aide — plus any skills-CLI-compatible agent." -ForegroundColor Cyan
-}
-
-# ─── MCP registration ─────────────────────────────────────────────────────────
-
-function Register-Mcp {
-    param([string]$InstallPath)
-    if ($NoMcp) { return }
-    if ($script:DetectedAgents.Count -eq 0) { Detect-Agents }
-
-    $registered  = [System.Collections.Generic.List[string]]::new()
-    $manualAgents = [System.Collections.Generic.List[string]]::new()
-
-    foreach ($entry in $script:DetectedAgents) {
-        $agentId    = $entry.Split(":")[0]
-        $agentLabel = $entry.Split(":")[1]
-
-        if ($Only -and $agentId -ne $Only) { continue }
-
-        switch ($agentId) {
-            "claude" {
-                if (Test-Command "claude") {
-                    if ($DryRun) {
-                        Write-Host "  [dry-run] claude mcp add sentinel -- uv run --project `"$InstallPath`" python -m sentinel.mcp" -ForegroundColor Yellow
-                        $registered.Add("$agentLabel (dry-run)")
-                    } else {
-                        try {
-                            & claude mcp add sentinel -- uv run --project "$InstallPath" python -m sentinel.mcp 2>$null
-                            Write-Info "Claude Code: MCP server registered."
-                            $registered.Add($agentLabel)
-                        } catch {
-                            Write-Warn "Claude Code: auto-registration failed."
-                            $manualAgents.Add($agentLabel)
-                        }
-                    }
-                } else { $manualAgents.Add($agentLabel) }
-            }
-            "gemini" {
-                if (Test-Command "gemini") {
-                    if ($DryRun) {
-                        Write-Host "  [dry-run] gemini extensions install https://github.com/Wembie/Sentinel" -ForegroundColor Yellow
-                        $registered.Add("$agentLabel (dry-run)")
-                    } else {
-                        try {
-                            & gemini extensions install "https://github.com/Wembie/Sentinel" 2>$null
-                            Write-Info "Gemini CLI: extension installed."
-                            $registered.Add($agentLabel)
-                        } catch {
-                            Write-Warn "Gemini CLI: auto-install failed."
-                            $manualAgents.Add($agentLabel)
-                        }
-                    }
-                } else { $manualAgents.Add($agentLabel) }
-            }
-            default { $manualAgents.Add($agentLabel) }
-        }
-    }
-
-    # Skills CLI fallback
-    if (-not $Minimal -and -not $Only -and (Test-Command "npx")) {
-        Write-Info "Running skills CLI registration (covers all skills-compatible agents)..."
-        if ($DryRun) {
-            Write-Host "  [dry-run] npx -y skills add https://github.com/Wembie/Sentinel" -ForegroundColor Yellow
-        } else {
-            try {
-                npx -y skills add "https://github.com/Wembie/Sentinel" 2>$null
-                Write-Info "Skills CLI: SENTINEL registered."
-            } catch {
-                Write-Warn "Skills CLI registration failed (non-fatal)."
-            }
-        }
-    }
-
-    if ($registered.Count -gt 0) {
-        Write-Host ""
-        Write-Info "Auto-registered: $($registered -join ', ')"
-    }
-
-    if ($manualAgents.Count -gt 0) {
-        Write-Host ""
-        Write-Cyan "Manual MCP config needed for: $($manualAgents -join ', ')"
-        Write-Host ""
-        Write-Host "  Add to your editor's MCP server settings:" -ForegroundColor Cyan
-        Write-Host @"
-    {
-      "command": "uv",
-      "args": ["run", "--project", "$($InstallPath.Replace('\','\\'))", "python", "-m", "sentinel.mcp"]
-    }
-"@
-        Write-Host ""
-        Write-Host "  See $InstallPath\mcp.example.json for editor-specific examples." -ForegroundColor Cyan
-        Write-Host "  Or run: sentinel init  (in any project root) to drop rule files." -ForegroundColor Cyan
-    }
-}
-
-# ─── hooks installation ───────────────────────────────────────────────────────
-
-function Install-Hooks {
-    param([string]$InstallPath)
-    $hooksInstaller = Join-Path $InstallPath "hooks\install.ps1"
-    if (-not (Test-Path $hooksInstaller)) {
-        Write-Warn "Hooks installer not found at $hooksInstaller — skipping."
-        return
-    }
-    Write-Info "Installing Claude Code hooks..."
-    if ($DryRun) {
-        Write-Host "  [dry-run] & `"$hooksInstaller`" -DryRun" -ForegroundColor Yellow
-    } else {
-        try {
-            & $hooksInstaller
-        } catch {
-            Write-Warn "Hooks installation failed (non-fatal): $_"
-        }
-    }
-}
-
-# ─── uninstall ────────────────────────────────────────────────────────────────
-
-function Invoke-Uninstall {
-    Write-Host "Uninstalling SENTINEL..." -ForegroundColor Cyan
-    if (Test-Path $InstallDir) {
-        if ($DryRun) {
-            Write-Host "  [dry-run] Remove-Item -Recurse -Force $InstallDir" -ForegroundColor Yellow
-        } else {
-            Remove-Item -Recurse -Force $InstallDir
-            Write-Info "Removed $InstallDir"
-        }
-    } else {
-        Write-Warn "Installation directory not found: $InstallDir"
-    }
-    foreach ($f in @("sentinel-mcp.cmd", "sentinel-mcp.ps1")) {
-        $p = Join-Path $BinDir $f
-        if (Test-Path $p) {
-            if ($DryRun) {
-                Write-Host "  [dry-run] Remove-Item $p" -ForegroundColor Yellow
-            } else {
-                Remove-Item $p
-                Write-Info "Removed $p"
-            }
-        }
-    }
-    Write-Info "SENTINEL uninstalled."
-}
-
-# ─── upgrade ──────────────────────────────────────────────────────────────────
-
-function Invoke-Upgrade {
-    if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
-        Fail "Upgrade requires a git-cloned install (-Dev). Use -Uninstall then re-run."
-    }
-    Write-Host "Upgrading SENTINEL..." -ForegroundColor Cyan
-    if ($DryRun) {
-        Write-Host "  [dry-run] git -C $InstallDir pull --ff-only" -ForegroundColor Yellow
-        Write-Host "  [dry-run] uv sync --project $InstallDir" -ForegroundColor Yellow
-    } else {
-        git -C $InstallDir pull --ff-only
-        uv sync --project $InstallDir
-    }
-    Test-Install
-    Write-Info "SENTINEL upgraded."
-}
-
-# ─── install ──────────────────────────────────────────────────────────────────
-
-function Invoke-Install {
+# ── Core installation ──────────────────────────────────────────────────────
+function Invoke-CoreInstall {
     param([bool]$DevMode = $false)
 
-    Write-Host "Installing SENTINEL..." -ForegroundColor Cyan
-    if ($DryRun) { Write-Warn "Dry-run mode — no changes will be made." }
+    Write-Say "SENTINEL installer"
+    Write-Note "  $RepoUrl"
+    if ($DryRun) { Write-Note "  (dry run — nothing will be written)" }
     Write-Host ""
 
     $pyCmd = Get-PythonCmd
-    Write-Info "Python: $(& $pyCmd --version)"
+    Write-Note "  python: $(& $pyCmd --version)"
 
     Install-Uv
 
     if ($DevMode) {
-        if (-not (Test-Command "git")) {
-            Fail "-Dev mode requires git. Install from https://git-scm.com"
-        }
+        if (-not (Test-Cmd "git")) { Write-Err "-Dev requires git — https://git-scm.com"; exit 1 }
         if (Test-Path (Join-Path $InstallDir ".git")) {
-            Write-Warn "Git repo already exists at $InstallDir. Use -Upgrade to update."
+            Write-Warn "  $InstallDir already exists — use -Upgrade"
         } else {
-            Write-Info "Cloning repository to $InstallDir..."
-            if ($DryRun) {
-                Write-Host "  [dry-run] git clone $RepoUrl $InstallDir" -ForegroundColor Yellow
-            } else {
-                git clone $RepoUrl $InstallDir
-            }
+            Write-Say "  -> cloning to $InstallDir..."
+            if ($DryRun) { Write-Note "  would run: git clone $RepoUrl $InstallDir" }
+            else { git clone $RepoUrl $InstallDir }
         }
     } else {
         if (Test-Path $InstallDir) {
-            Write-Warn "$InstallDir already exists. Use -Upgrade or -Uninstall first."
+            Write-Warn "  $InstallDir already exists — use -Upgrade or -Uninstall first"
         } else {
-            Write-Info "Downloading SENTINEL to $InstallDir..."
+            Write-Say "  -> downloading to $InstallDir..."
             if ($DryRun) {
-                Write-Host "  [dry-run] download $RepoArchive -> $InstallDir" -ForegroundColor Yellow
+                Write-Note "  would download $RepoArchive -> $InstallDir"
             } else {
                 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
                 $zipPath = Join-Path $env:TEMP "sentinel-main.zip"
@@ -529,58 +309,220 @@ function Invoke-Install {
                     Expand-Archive -Path $zipPath -DestinationPath $env:TEMP -Force
                     $extracted = Join-Path $env:TEMP "Sentinel-main"
                     Copy-Item -Recurse -Force "$extracted\*" $InstallDir
-                    Remove-Item $zipPath, $extracted -Recurse -Force -ErrorAction SilentlyContinue
-                } catch {
-                    Fail "Download failed: $_"
-                }
+                    Remove-Item $zipPath, $extracted -Recurse -Force -EA SilentlyContinue
+                } catch { Write-Err "Download failed: $_"; exit 1 }
             }
         }
     }
 
-    Write-Info "Syncing dependencies..."
-    if ($DryRun) {
-        Write-Host "  [dry-run] uv sync --project $InstallDir" -ForegroundColor Yellow
-    } else {
-        uv sync --project $InstallDir
-    }
+    Write-Say "  -> syncing dependencies..."
+    if ($DryRun) { Write-Note "  would run: uv sync --project $InstallDir" }
+    else { uv sync --project $InstallDir }
 
     Ensure-BinDir
     Write-Wrapper
-    Test-Install
-
-    Detect-Agents
-    Register-Mcp -InstallPath $InstallDir
-
-    # Optional: install Claude Code hooks
-    if ($WithHooks) {
-        Install-Hooks -InstallPath $InstallDir
-    }
-
-    # Optional: run sentinel init in current directory
-    if ($WithInit) {
-        Write-Info "Running sentinel init in current directory..."
-        if ($DryRun) {
-            Write-Host "  [dry-run] uv run --project $InstallDir sentinel init ." -ForegroundColor Yellow
-        } else {
-            uv run --project $InstallDir sentinel init .
-        }
-    }
-
-    Write-Host ""
-    Write-Host "SENTINEL installed successfully!" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Start MCP server:    sentinel-mcp"
-    Write-Host "  Run audit:           uv run --project `"$InstallDir`" sentinel audit .\"
-    Write-Host "  List rules:          uv run --project `"$InstallDir`" sentinel rules"
-    Write-Host "  Per-project setup:   uv run --project `"$InstallDir`" sentinel init"
-    Write-Host "  Install hooks:       & `"$InstallDir\hooks\install.ps1`""
+    Test-SentinelInstall
+    Write-Config
     Write-Host ""
 }
 
-# ─── dispatch ─────────────────────────────────────────────────────────────────
+# ── Per-agent install functions ────────────────────────────────────────────
+function Install-Claude {
+    $script:DetectedCount++
+    Write-Say "-> Claude Code detected"
 
-if      ($List)      { Invoke-List }
-elseif  ($Uninstall) { Invoke-Uninstall }
-elseif  ($Upgrade)   { Invoke-Upgrade }
-elseif  ($Dev)       { Invoke-Install -DevMode $true }
-else                 { Invoke-Install -DevMode $false }
+    if (-not $Force -and (Test-Cmd "claude") -and (& claude mcp list 2>$null | Select-String -Quiet "^sentinel")) {
+        Write-Note "  sentinel MCP already registered (-Force to re-register)"
+        Add-Skipped "claude" "already registered"
+        Write-Host ""; return
+    }
+
+    if (Test-Cmd "claude") {
+        try {
+            if ($DryRun) { Write-Note "  would run: claude mcp add sentinel -- uv run --project `"$InstallDir`" python -m sentinel.mcp" }
+            else { & claude mcp add sentinel -- uv run --project "$InstallDir" python -m sentinel.mcp }
+            Write-Ok "  MCP server registered"
+            Add-Installed "claude"
+        } catch {
+            Write-Warn "  claude mcp add failed: $_"
+            Add-Failed "claude" "claude mcp add failed"
+        }
+    } else {
+        Write-Warn "  claude CLI not found — add MCP server manually:"
+        Write-Note "    command: uv"
+        Write-Note "    args: [`"run`", `"--project`", `"$InstallDir`", `"python`", `"-m`", `"sentinel.mcp`"]"
+        Add-Failed "claude" "claude CLI not on PATH"
+    }
+
+    if ($WithHooks) {
+        Write-Say "  -> installing Claude Code hooks..."
+        $hooksInstaller = Join-Path $InstallDir "hooks\install.ps1"
+        if (Test-Path $hooksInstaller) {
+            if ($DryRun) { Write-Note "  would run: & `"$hooksInstaller`"" }
+            else {
+                try { & $hooksInstaller; Add-Installed "claude-hooks" }
+                catch { Write-Warn "  hooks installer failed (non-fatal): $_"; Add-Failed "claude-hooks" "hooks/install.ps1 failed" }
+            }
+        } else {
+            Write-Note "  hooks installer not found — run: & `"$InstallDir\hooks\install.ps1`""
+            Add-Skipped "claude-hooks" "installer not found"
+        }
+    }
+    Write-Host ""
+}
+
+function Install-Gemini {
+    $script:DetectedCount++
+    Write-Say "-> Gemini CLI detected"
+
+    if (-not $Force -and (& gemini extensions list 2>$null | Select-String -Quiet "sentinel")) {
+        Write-Note "  sentinel extension already installed (-Force to reinstall)"
+        Add-Skipped "gemini" "already installed"
+        Write-Host ""; return
+    }
+
+    try {
+        if ($DryRun) { Write-Note "  would run: gemini extensions install $RepoUrl" }
+        else { & gemini extensions install $RepoUrl }
+        Add-Installed "gemini"
+    } catch {
+        Add-Failed "gemini" "gemini extensions install failed"
+    }
+    Write-Host ""
+}
+
+function Install-ViaSkills {
+    param([string]$Id, [string]$Label, [string]$Profile)
+    $script:DetectedCount++
+    Write-Say "-> $Label detected"
+
+    if (-not (Test-NodeNpx)) { Add-Failed $Id "node/npx missing"; Write-Host ""; return }
+
+    try {
+        if ($DryRun) { Write-Note "  would run: npx -y skills add $RepoUrl -a $Profile" }
+        else { npx -y skills add $RepoUrl -a $Profile }
+        Add-Installed $Id
+    } catch {
+        Add-Failed $Id "npx skills add (profile: $Profile) failed"
+    }
+    Write-Host ""
+}
+
+# ── Uninstall ──────────────────────────────────────────────────────────────
+function Invoke-Uninstall {
+    Write-Say "SENTINEL uninstall"
+    if (Test-Path $InstallDir) {
+        if ($DryRun) { Write-Note "  would remove $InstallDir" }
+        else { Remove-Item -Recurse -Force $InstallDir; Write-Ok "  removed $InstallDir" }
+    } else { Write-Warn "  $InstallDir not found" }
+    foreach ($f in @("sentinel-mcp.cmd", "sentinel-mcp.ps1")) {
+        $p = Join-Path $BinDir $f
+        if (Test-Path $p) {
+            if ($DryRun) { Write-Note "  would remove $p" }
+            else { Remove-Item $p; Write-Ok "  removed $p" }
+        }
+    }
+    Write-Ok "  done."
+}
+
+# ── Upgrade ────────────────────────────────────────────────────────────────
+function Invoke-Upgrade {
+    if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
+        Write-Err "upgrade requires a -Dev install (git repo at $InstallDir)"; exit 1
+    }
+    Write-Say "SENTINEL upgrade"
+    if ($DryRun) { Write-Note "  would run: git pull + uv sync" }
+    else { git -C $InstallDir pull --ff-only; uv sync --project $InstallDir }
+    Test-SentinelInstall
+    Write-Ok "  upgraded."
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────
+if      ($Uninstall) { Invoke-Uninstall; exit 0 }
+elseif  ($Upgrade)   { Invoke-Upgrade;   exit 0 }
+elseif  ($Dev)       { Invoke-CoreInstall -DevMode $true }
+else                 { Invoke-CoreInstall -DevMode $false }
+
+# ── Agent registration ─────────────────────────────────────────────────────
+Write-Say "SENTINEL registering with detected agents..."
+Write-Host ""
+
+foreach ($p in $Providers) {
+    if (-not (Test-Want $p.Id)) { continue }
+    if (-not (Test-DetectMatch $p.Detect)) { continue }
+
+    switch ($p.Id) {
+        "claude"  { Install-Claude; break }
+        "gemini"  { Install-Gemini; break }
+        default   { Install-ViaSkills $p.Id $p.Label $p.Profile; break }
+    }
+}
+
+# ── Generic npx skills fallback ────────────────────────────────────────────
+if (-not $SkipSkills -and $Only.Count -eq 0 -and $script:DetectedCount -eq 0) {
+    Write-Say "-> no agents detected — running npx skills auto-detect fallback"
+    if (Test-NodeNpx) {
+        try {
+            if ($DryRun) { Write-Note "  would run: npx -y skills add $RepoUrl" }
+            else { npx -y skills add $RepoUrl }
+            Add-Installed "skills-auto"
+        } catch { Add-Failed "skills-auto" "npx skills add (auto) failed" }
+    }
+    Write-Host ""
+}
+
+# ── --with-init ────────────────────────────────────────────────────────────
+if ($WithInit) {
+    Write-Say "-> writing per-project rule files into $PWD (-WithInit)"
+    if ($DryRun) { Write-Note "  would run: uv run --project $InstallDir sentinel init ." }
+    else {
+        try {
+            $initArgs = @(".")
+            if ($Force) { $initArgs += "--force" }
+            uv run --project $InstallDir sentinel init @initArgs
+            Add-Installed "sentinel-init ($PWD)"
+        } catch { Add-Failed "sentinel-init" "sentinel init failed" }
+    }
+    Write-Host ""
+} elseif ($InstalledIds.Count -gt 0 -or $SkippedIds.Count -gt 0) {
+    Write-Note "  tip: re-run with -All (or -WithInit) to also write per-project IDE rule files."
+}
+
+# ── Summary ────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Say "SENTINEL done"
+Write-Host ""
+
+if ($InstalledIds.Count -gt 0) {
+    Write-Ok "  installed:"
+    $InstalledIds | ForEach-Object { Write-Host "    * $_" }
+}
+
+if ($SkippedIds.Count -gt 0) {
+    Write-Host "  skipped:"
+    for ($i = 0; $i -lt $SkippedIds.Count; $i++) {
+        Write-Host "    * $($SkippedIds[$i]) -- $($SkippedWhy[$i])"
+    }
+}
+
+if ($FailedIds.Count -gt 0) {
+    Write-Warn "  failed:"
+    for ($i = 0; $i -lt $FailedIds.Count; $i++) {
+        Write-Host "    * $($FailedIds[$i]) -- $($FailedWhy[$i])" -ForegroundColor Red
+    }
+}
+
+if ($InstalledIds.Count -eq 0 -and $SkippedIds.Count -eq 0 -and $FailedIds.Count -eq 0) {
+    Write-Note "  nothing detected -- run 'install.ps1 -List' for all supported agents"
+    Write-Note "  or pass -Only <agent> to force a specific target."
+}
+
+Write-Host ""
+Write-Note "  start an audit: uv run --project `"$InstallDir`" sentinel audit ."
+Write-Note "  per-project setup: sentinel init"
+
+# Exit non-zero only when every detected agent failed.
+if ($script:DetectedCount -gt 0 -and $InstalledIds.Count -eq 0 -and $SkippedIds.Count -eq 0) {
+    exit 1
+}
+exit 0

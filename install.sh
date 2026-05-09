@@ -1,554 +1,737 @@
 #!/usr/bin/env bash
 # SENTINEL Installer — macOS / Linux / WSL / Git Bash
-# Usage:
+#
+# One line:
 #   curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash
-#   bash install.sh [OPTIONS]
 #
-# Options:
-#   --dev           Clone repository and install in editable mode
-#   --upgrade       Pull latest changes and re-sync dependencies
-#   --uninstall     Remove SENTINEL installation
-#   --dry-run       Print all actions without executing anything
-#   --list          List detected agents and exit
-#   --no-mcp        Skip MCP auto-registration
-#   --with-hooks    Install Claude Code session hooks (auto-activates SENTINEL at session start)
-#   --with-init     Run `sentinel init` in the current directory after install
-#   --all           Enable --with-hooks + --with-mcp (hooks + MCP registration for all detected agents)
-#   --minimal       Install package only; skip MCP registration, hooks, and init
-#   --only <id>     Register with a specific agent only (e.g. --only claude)
+# Detects which AI coding agents are on your machine and registers SENTINEL
+# as an MCP server for each one. Skips agents that aren't installed.
+# Safe to re-run — idempotent per agent.
 #
-# Environment overrides:
-#   SENTINEL_HOME   Install directory (default: ~/.sentinel)
-#   SENTINEL_BIN    Bin directory for sentinel-mcp wrapper (default: ~/.local/bin)
+# Run `install.sh --help` for the full flag reference and agent matrix.
 
 set -euo pipefail
 
-# ─── configuration ────────────────────────────────────────────────────────────
-
-REPO_URL="https://github.com/Wembie/Sentinel"
-REPO_ARCHIVE="https://github.com/Wembie/Sentinel/archive/refs/heads/main.tar.gz"
+# ── Constants ──────────────────────────────────────────────────────────────
+REPO="Wembie/Sentinel"
+REPO_URL="https://github.com/$REPO"
+REPO_ARCHIVE="https://github.com/$REPO/archive/refs/heads/main.tar.gz"
 INSTALL_DIR="${SENTINEL_HOME:-$HOME/.sentinel}"
 BIN_DIR="${SENTINEL_BIN:-$HOME/.local/bin}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
-BOLD="\033[1m"
-GREEN="\033[32m"
-YELLOW="\033[33m"
-RED="\033[31m"
-CYAN="\033[36m"
-RESET="\033[0m"
 
-# ─── flags ────────────────────────────────────────────────────────────────────
+# ── Flags ──────────────────────────────────────────────────────────────────
+DRY=0
+FORCE=0
+MODE="install"   # install | dev | upgrade | uninstall | list
+WITH_HOOKS=auto  # auto resolves to 1 unless --minimal is set
+WITH_INIT=0
+ALL=0
+MINIMAL=0
+SKIP_SKILLS=0
+NO_COLOR=0
+ONLY=()
 
-MODE="install"
-DRY_RUN=false
-NO_MCP=false
-WITH_HOOKS=false
-WITH_INIT=false
-MINIMAL=false
-ONLY_AGENT=""
+# Result trackers (parallel indexed arrays — bash 3.2 safe)
+INSTALLED_IDS=()
+SKIPPED_IDS=()
+SKIPPED_WHY=()
+FAILED_IDS=()
+FAILED_WHY=()
+DETECTED_COUNT=0
 
-for arg in "$@"; do
-  case "$arg" in
+# ── Color setup (auto-disable on non-TTY) ──────────────────────────────────
+if [ ! -t 1 ]; then NO_COLOR=1; fi
+
+# ── Argument parsing ───────────────────────────────────────────────────────
+print_help() {
+  cat <<'EOF'
+SENTINEL installer — detects your agents and registers the MCP server for each.
+
+USAGE
+  install.sh [flags]
+
+  curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Wembie/Sentinel/main/install.sh | bash -s -- --with-hooks
+
+FLAGS
+  --dev             Clone repository and install in editable mode (requires git).
+  --upgrade         Pull latest and re-sync dependencies (requires --dev install).
+  --uninstall       Remove SENTINEL installation.
+  --dry-run         Print all actions without executing anything.
+  --force           Re-register even if already registered.
+  --only <agent>    Register with a specific agent only. Repeatable.
+  --skip-skills     Skip the npx-skills auto-detect fallback.
+  --all             Turn on --with-hooks and --with-init.
+  --minimal         Package only; skip hooks, per-project init, and skills.
+  --with-hooks      Install Claude Code SessionStart hooks. On by default.
+  --with-init       Run `sentinel init` in the current directory.
+  --list            Print the full agent matrix and exit.
+  --no-color        Disable ANSI color codes (auto-disabled on non-TTY).
+  -h, --help        Show this help and exit.
+
+AGENTS DETECTED
+  Native:
+    claude      Claude Code           claude mcp add
+    gemini      Gemini CLI            gemini extensions install
+    codex       Codex CLI             npx skills add (codex)
+  IDE / VS Code-family:
+    cursor      Cursor IDE            npx skills add (cursor)
+    windsurf    Windsurf IDE          npx skills add (windsurf)
+    cline       Cline                 npx skills add (cline)
+    copilot     GitHub Copilot        npx skills add (github-copilot)
+    continue    Continue              npx skills add (continue)
+    kilo        Kilo Code             npx skills add (kilo)
+    roo         Roo Code              npx skills add (roo)
+    augment     Augment Code          npx skills add (augment)
+  CLI agents (30+ via skills):
+    aider-desk  Aider Desk            npx skills add (aider-desk)
+    amp         Sourcegraph Amp       npx skills add (amp)
+    bob         IBM Bob               npx skills add (bob)
+    crush       Crush                 npx skills add (crush)
+    devin       Devin                 npx skills add (devin)
+    droid       Droid (Factory)       npx skills add (droid)
+    forgecode   ForgeCode             npx skills add (forgecode)
+    goose       Block Goose           npx skills add (goose)
+    iflow       iFlow CLI             npx skills add (iflow-cli)
+    junie       JetBrains Junie       npx skills add (junie)
+    kiro        Kiro CLI              npx skills add (kiro-cli)
+    mistral     Mistral Vibe          npx skills add (mistral-vibe)
+    openhands   OpenHands             npx skills add (openhands)
+    opencode    opencode              npx skills add (opencode)
+    qwen        Qwen Code             npx skills add (qwen-code)
+    qoder       Qoder                 npx skills add (qoder)
+    rovodev     Atlassian Rovo Dev    npx skills add (rovodev)
+    tabnine     Tabnine CLI           npx skills add (tabnine-cli)
+    trae        Trae                  npx skills add (trae)
+    warp        Warp                  npx skills add (warp)
+    replit      Replit Agent          npx skills add (replit)
+    antigravity Google Antigravity    npx skills add (antigravity)
+
+ENVIRONMENT
+  SENTINEL_HOME   Install directory (default: ~/.sentinel)
+  SENTINEL_BIN    Bin dir for sentinel-mcp wrapper (default: ~/.local/bin)
+
+EXAMPLES
+  install.sh                        # default: install + hooks
+  install.sh --all                  # install + hooks + per-project init
+  install.sh --minimal              # install package only
+  install.sh --dry-run --all
+  install.sh --only claude
+  install.sh --only cursor --only windsurf
+  install.sh --upgrade
+  install.sh --list
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dev)         MODE="dev" ;;
     --upgrade)     MODE="upgrade" ;;
     --uninstall)   MODE="uninstall" ;;
-    --dry-run)     DRY_RUN=true ;;
+    --dry-run)     DRY=1 ;;
+    --force)       FORCE=1 ;;
+    --skip-skills) SKIP_SKILLS=1 ;;
+    --with-hooks)  WITH_HOOKS=1 ;;
+    --with-init)   WITH_INIT=1 ;;
+    --all)         ALL=1 ;;
+    --minimal)     MINIMAL=1 ;;
     --list)        MODE="list" ;;
-    --no-mcp)      NO_MCP=true ;;
-    --with-hooks)  WITH_HOOKS=true ;;
-    --with-init)   WITH_INIT=true ;;
-    --all)         WITH_HOOKS=true; WITH_INIT=false ;;
-    --minimal)     NO_MCP=true; MINIMAL=true ;;
-    --only)        shift; ONLY_AGENT="${1:-}" ;;
-    --help|-h)
-      echo "Usage: install.sh [--dev] [--upgrade] [--uninstall] [--dry-run] [--list]"
-      echo "                  [--no-mcp] [--with-hooks] [--with-init] [--all] [--minimal]"
-      echo "                  [--only <agent-id>]"
-      exit 0
-      ;;
+    --no-color)    NO_COLOR=1 ;;
+    --only)
+      shift
+      [ $# -eq 0 ] && { echo "error: --only requires an argument" >&2; exit 2; }
+      ONLY+=("$1") ;;
+    -h|--help) print_help; exit 0 ;;
+    *) echo "error: unknown flag: $1" >&2; echo "run 'install.sh --help' for usage" >&2; exit 2 ;;
   esac
+  shift
 done
 
-# ─── helpers ──────────────────────────────────────────────────────────────────
+# Resolve --all / --minimal / "auto" into concrete values.
+if [ "$ALL" = 1 ] && [ "$MINIMAL" = 1 ]; then
+  echo "error: --all and --minimal are mutually exclusive" >&2; exit 2
+fi
+if [ "$ALL" = 1 ];     then WITH_HOOKS=1; WITH_INIT=1; fi
+if [ "$MINIMAL" = 1 ]; then WITH_HOOKS=0; WITH_INIT=0; SKIP_SKILLS=1; fi
+[ "$WITH_HOOKS" = "auto" ] && WITH_HOOKS=1
 
-info()    { echo -e "${GREEN}[SENTINEL]${RESET} $*"; }
-warn()    { echo -e "${YELLOW}[SENTINEL]${RESET} $*"; }
-error()   { echo -e "${RED}[SENTINEL ERROR]${RESET} $*" >&2; }
-die()     { error "$*"; exit 1; }
-bold()    { echo -e "${BOLD}$*${RESET}"; }
-cyan()    { echo -e "${CYAN}$*${RESET}"; }
+# ── Color helpers ──────────────────────────────────────────────────────────
+if [ "$NO_COLOR" = 1 ]; then
+  c_blue=""; c_dim=""; c_red=""; c_green=""; c_yellow=""; c_reset=""
+else
+  c_blue=$'\033[34m'
+  c_dim=$'\033[2m'
+  c_red=$'\033[31m'
+  c_green=$'\033[32m'
+  c_yellow=$'\033[33m'
+  c_reset=$'\033[0m'
+fi
 
-run_cmd() {
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo -e "  ${YELLOW}[dry-run]${RESET} $*"
-  else
-    eval "$@"
-  fi
+say()  { printf '%s%s%s\n' "$c_blue"   "$1" "$c_reset"; }
+note() { printf '%s%s%s\n' "$c_dim"    "$1" "$c_reset"; }
+warn() { printf '%s%s%s\n' "$c_yellow" "$1" "$c_reset" >&2; }
+err()  { printf '%s%s%s\n' "$c_red"    "$1" "$c_reset" >&2; }
+ok()   { printf '%s%s%s\n' "$c_green"  "$1" "$c_reset"; }
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+want() {
+  [ ${#ONLY[@]} -eq 0 ] && return 0
+  local a; for a in "${ONLY[@]}"; do [ "$a" = "$1" ] && return 0; done
+  return 1
 }
 
-need_cmd() {
-  command -v "$1" &>/dev/null
+run() {
+  if [ "$DRY" = 1 ]; then note "  would run: $*"; return 0; fi
+  echo "  $ $*"; "$@"
 }
 
-detect_os() {
-  case "$(uname -s)" in
-    Linux*)   echo "linux" ;;
-    Darwin*)  echo "macos" ;;
-    MINGW*|CYGWIN*|MSYS*) echo "windows" ;;
-    *)        echo "unknown" ;;
-  esac
+try() {
+  if [ "$DRY" = 1 ]; then note "  would run: $*"; return 0; fi
+  echo "  $ $*"; "$@"
 }
 
+has() { command -v "$1" >/dev/null 2>&1; }
+
+ensure_node() {
+  has node && has npx && return 0
+  warn "  node + npx required — install Node.js (https://nodejs.org) and re-run."
+  return 1
+}
+
+record_installed() { INSTALLED_IDS+=("$1"); }
+record_skipped()   { SKIPPED_IDS+=("$1"); SKIPPED_WHY+=("$2"); }
+record_failed()    { FAILED_IDS+=("$1"); FAILED_WHY+=("$2"); }
+
+# ── Detection helpers ──────────────────────────────────────────────────────
+vscode_ext_present() {
+  local needle="$1"
+  local roots=("$HOME/.vscode/extensions" "$HOME/.vscode-server/extensions" "$HOME/.cursor/extensions" "$HOME/.windsurf/extensions")
+  local r
+  for r in "${roots[@]}"; do
+    [ -d "$r" ] && ls "$r" 2>/dev/null | grep -qi "$needle" && return 0
+  done
+  return 1
+}
+
+cursor_ext_present() {
+  local needle="$1"
+  [ -d "$HOME/.cursor/extensions" ] && ls "$HOME/.cursor/extensions" 2>/dev/null | grep -qi "$needle"
+}
+
+jetbrains_plugin_present() {
+  local needle="$1"
+  local roots=("$HOME/Library/Application Support/JetBrains" "$HOME/.config/JetBrains")
+  local r
+  for r in "${roots[@]}"; do
+    [ -d "$r" ] && find "$r" -maxdepth 4 -type d -iname "*${needle}*" 2>/dev/null | grep -q . && return 0
+  done
+  return 1
+}
+
+# Parse a PROVIDER_DETECT spec ("command:foo||dir:~/.x") and return 0 if any clause matches.
+# Splits on '||' via parameter expansion — avoids BSD awk regex bugs.
+detect_match() {
+  local spec="$1" rest="$spec" clause
+  while [ -n "$rest" ]; do
+    if [ "${rest#*||}" != "$rest" ]; then
+      clause="${rest%%||*}"; rest="${rest#*||}"
+    else
+      clause="$rest"; rest=""
+    fi
+    [ -z "$clause" ] && continue
+    case "$clause" in
+      command:*)           has "${clause#command:}" && return 0 ;;
+      dir:*)               [ -d "${clause#dir:}" ] && return 0 ;;
+      file:*)              [ -f "${clause#file:}" ] && return 0 ;;
+      vscode-ext:*)        vscode_ext_present "${clause#vscode-ext:}" && return 0 ;;
+      cursor-ext:*)        cursor_ext_present "${clause#cursor-ext:}" && return 0 ;;
+      jetbrains-plugin:*)  jetbrains_plugin_present "${clause#jetbrains-plugin:}" && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# ── Provider matrix (bash 3.2-safe parallel arrays) ───────────────────────
+# id | label | skills profile | detection spec
+# claude and gemini are handled by dedicated functions — included here for --list only.
+PROVIDER_IDS=(
+  "claude" "gemini" "codex"
+  "cursor" "windsurf" "cline" "copilot" "continue" "kilo" "roo" "augment"
+  "aider-desk" "amp" "bob" "crush" "devin" "droid" "forgecode" "goose"
+  "iflow" "junie" "kiro" "mistral" "openhands" "opencode" "qwen" "qoder"
+  "rovodev" "tabnine" "trae" "warp" "replit" "antigravity"
+)
+PROVIDER_LABELS=(
+  "Claude Code" "Gemini CLI" "Codex CLI"
+  "Cursor" "Windsurf" "Cline" "GitHub Copilot" "Continue" "Kilo Code" "Roo Code" "Augment Code"
+  "Aider Desk" "Sourcegraph Amp" "IBM Bob" "Crush" "Devin" "Droid (Factory)" "ForgeCode" "Block Goose"
+  "iFlow CLI" "JetBrains Junie" "Kiro CLI" "Mistral Vibe" "OpenHands" "opencode" "Qwen Code" "Qoder"
+  "Atlassian Rovo Dev" "Tabnine CLI" "Trae" "Warp" "Replit Agent" "Google Antigravity"
+)
+PROVIDER_MECHS=(
+  "claude mcp add" "gemini extensions install" "npx skills add (codex)"
+  "npx skills add (cursor)" "npx skills add (windsurf)" "npx skills add (cline)"
+  "npx skills add (github-copilot)" "npx skills add (continue)" "npx skills add (kilo)"
+  "npx skills add (roo)" "npx skills add (augment)"
+  "npx skills add (aider-desk)" "npx skills add (amp)" "npx skills add (bob)"
+  "npx skills add (crush)" "npx skills add (devin)" "npx skills add (droid)"
+  "npx skills add (forgecode)" "npx skills add (goose)" "npx skills add (iflow-cli)"
+  "npx skills add (junie)" "npx skills add (kiro-cli)" "npx skills add (mistral-vibe)"
+  "npx skills add (openhands)" "npx skills add (opencode)" "npx skills add (qwen-code)"
+  "npx skills add (qoder)" "npx skills add (rovodev)" "npx skills add (tabnine-cli)"
+  "npx skills add (trae)" "npx skills add (warp)" "npx skills add (replit)"
+  "npx skills add (antigravity)"
+)
+PROVIDER_DETECT=(
+  "command:claude||dir:$HOME/.claude"
+  "command:gemini||dir:$HOME/.gemini"
+  "command:codex||dir:$HOME/.codex"
+  "command:cursor||dir:$HOME/.cursor"
+  "command:windsurf||dir:$HOME/.codeium/windsurf||dir:$HOME/.windsurf"
+  "vscode-ext:cline"
+  "command:gh"
+  "vscode-ext:continue.continue||vscode-ext:continue"
+  "vscode-ext:kilocode||dir:$HOME/.kilocode"
+  "vscode-ext:roo||vscode-ext:rooveterinaryinc.roo-cline||cursor-ext:roo"
+  "vscode-ext:augment||jetbrains-plugin:augment"
+  "command:aider||dir:$HOME/.aider-desk"
+  "command:amp"
+  "command:bob||dir:$HOME/.bob"
+  "command:crush||dir:$HOME/.config/crush"
+  "command:devin||dir:$HOME/.config/devin"
+  "command:droid||dir:$HOME/.factory"
+  "command:forge||dir:$HOME/.forge"
+  "command:goose||dir:$HOME/.config/goose"
+  "command:iflow||dir:$HOME/.iflow"
+  "dir:$HOME/.junie||jetbrains-plugin:junie"
+  "command:kiro||dir:$HOME/.kiro"
+  "command:mistral||dir:$HOME/.vibe"
+  "command:openhands||dir:$HOME/.openhands"
+  "command:opencode||file:$HOME/.config/opencode/AGENTS.md"
+  "command:qwen||dir:$HOME/.qwen"
+  "dir:$HOME/.qoder"
+  "command:rovodev||dir:$HOME/.rovodev"
+  "command:tabnine||dir:$HOME/.tabnine"
+  "command:trae||dir:$HOME/.trae"
+  "command:warp||dir:$HOME/.warp"
+  "command:replit||dir:$HOME/.replit"
+  "dir:$HOME/.gemini/antigravity"
+)
+
+# ── --list mode ────────────────────────────────────────────────────────────
+if [ "$MODE" = "list" ]; then
+  say "🛡  SENTINEL agent matrix"
+  printf '\n  %-14s %-22s %s\n' "ID" "AGENT" "INSTALL MECHANISM"
+  printf '  %-14s %-22s %s\n'   "----" "-----" "-----------------"
+  i=0; total=${#PROVIDER_IDS[@]}
+  while [ $i -lt "$total" ]; do
+    printf '  %-14s %-22s %s\n' "${PROVIDER_IDS[$i]}" "${PROVIDER_LABELS[$i]}" "${PROVIDER_MECHS[$i]}"
+    i=$((i + 1))
+  done
+  echo
+  note "  Defaults: --with-hooks ON. --all turns on --with-init. --minimal turns both off."
+  echo
+  exit 0
+fi
+
+# ── Core install helpers ───────────────────────────────────────────────────
 check_python() {
   local py_cmd=""
   for candidate in python3 python python3.11 python3.12 python3.13; do
-    if need_cmd "$candidate"; then
-      local ver
+    if has "$candidate"; then
+      local ver major minor
       ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
-      local major="${ver%%.*}"
-      local minor="${ver##*.}"
+      major="${ver%%.*}"; minor="${ver##*.}"
       if [[ "$major" -gt "$MIN_PYTHON_MAJOR" ]] || \
          [[ "$major" -eq "$MIN_PYTHON_MAJOR" && "$minor" -ge "$MIN_PYTHON_MINOR" ]]; then
-        py_cmd="$candidate"
-        break
+        py_cmd="$candidate"; break
       fi
     fi
   done
-  if [[ -z "$py_cmd" ]]; then
-    die "Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ required. Install from https://python.org"
-  fi
+  [ -z "$py_cmd" ] && { err "Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ required — https://python.org"; exit 1; }
   echo "$py_cmd"
 }
 
 install_uv() {
-  if need_cmd uv; then
-    info "uv already installed: $(uv --version)"
-    return
-  fi
-  info "Installing uv (Python package manager)..."
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "  [dry-run] curl -LsSf https://astral.sh/uv/install.sh | sh"
-    return
-  fi
-  if need_cmd curl; then
+  has uv && { note "  uv $(uv --version) already installed"; return; }
+  say "  → installing uv..."
+  if [ "$DRY" = 1 ]; then note "  would run: curl -LsSf https://astral.sh/uv/install.sh | sh"; return; fi
+  if has curl; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
-  elif need_cmd wget; then
+  elif has wget; then
     wget -qO- https://astral.sh/uv/install.sh | sh
   else
-    die "curl or wget required to install uv. Install one and retry."
+    err "curl or wget required to install uv"; exit 1
   fi
   export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-  if ! need_cmd uv; then
-    die "uv installed but not found on PATH. Add ~/.cargo/bin or ~/.local/bin to PATH."
-  fi
-  info "uv installed: $(uv --version)"
+  has uv || { err "uv installed but not on PATH — add ~/.local/bin to PATH"; exit 1; }
 }
 
 ensure_bin_dir() {
   mkdir -p "$BIN_DIR"
   if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    warn "$BIN_DIR is not on PATH. Add this to your shell profile:"
-    echo "  export PATH=\"\$PATH:$BIN_DIR\""
+    warn "  $BIN_DIR not on PATH — add: export PATH=\"\$PATH:$BIN_DIR\""
   fi
 }
 
 write_wrapper() {
   local wrapper="$BIN_DIR/sentinel-mcp"
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "  [dry-run] write $wrapper"
-    return
-  fi
+  [ "$DRY" = 1 ] && { note "  would write $wrapper"; return; }
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 exec uv run --project "$INSTALL_DIR" python -m sentinel.mcp "\$@"
 EOF
   chmod +x "$wrapper"
-  info "Wrapper written: $wrapper"
+  ok "  wrapper: $wrapper"
 }
 
 validate_install() {
-  info "Validating installation..."
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "  [dry-run] uv run --project $INSTALL_DIR python -c 'import sentinel'"
-    return
-  fi
-  if uv run --project "$INSTALL_DIR" python -c "import sentinel; print('sentinel OK')" &>/dev/null; then
-    info "Import check passed."
-  else
-    die "Import validation failed. Check: uv run --project $INSTALL_DIR python -c \"import sentinel\""
-  fi
+  [ "$DRY" = 1 ] && { note "  would validate: import sentinel"; return; }
+  uv run --project "$INSTALL_DIR" python -c "import sentinel" &>/dev/null \
+    || { err "import validation failed — check: uv run --project $INSTALL_DIR python -c 'import sentinel'"; exit 1; }
+  ok "  import OK"
 }
 
-# ─── agent detection ──────────────────────────────────────────────────────────
+write_config() {
+  local config_dir="$HOME/.config/sentinel"
+  local config_file="$config_dir/config.json"
 
-DETECTED_AGENTS=()
-
-detect_agents() {
-  info "Scanning for AI coding agents..."
-  DETECTED_AGENTS=()
-
-  local ext_dirs=("$HOME/.vscode/extensions" "$HOME/.cursor/extensions" "$HOME/.windsurf/extensions")
-
-  # ── Native CLI agents ──────────────────────────────────────────────────────
-
-  # Claude Code
-  if need_cmd claude || [[ -d "$HOME/.claude" ]]; then
-    DETECTED_AGENTS+=("claude:Claude Code")
-  fi
-
-  # Gemini CLI
-  if need_cmd gemini || [[ -f "$HOME/.gemini/config.json" ]] || [[ -d "$HOME/.gemini" ]]; then
-    DETECTED_AGENTS+=("gemini:Gemini CLI")
-  fi
-
-  # OpenAI Codex CLI
-  if need_cmd codex || [[ -d "$HOME/.codex" ]]; then
-    DETECTED_AGENTS+=("codex:Codex CLI")
-  fi
-
-  # GitHub Copilot CLI (gh extension)
-  if need_cmd gh && gh extension list 2>/dev/null | grep -q "gh-copilot"; then
-    DETECTED_AGENTS+=("copilot-cli:GitHub Copilot CLI")
-  fi
-
-  # Aider
-  if need_cmd aider; then
-    DETECTED_AGENTS+=("aider:Aider")
-  fi
-
-  # v0 (Vercel)
-  if need_cmd v0; then
-    DETECTED_AGENTS+=("v0:v0")
-  fi
-
-  # ── IDE editors ─────────────────────────────────────────────────────────────
-
-  # Cursor
-  if need_cmd cursor || [[ -d "$HOME/.cursor" ]]; then
-    DETECTED_AGENTS+=("cursor:Cursor")
-  fi
-
-  # Windsurf
-  if [[ -d "$HOME/.codeium/windsurf" ]] || [[ -d "$HOME/.windsurf" ]] || need_cmd windsurf; then
-    DETECTED_AGENTS+=("windsurf:Windsurf")
-  fi
-
-  # VS Code
-  if need_cmd code; then
-    DETECTED_AGENTS+=("vscode:VS Code")
-  fi
-
-  # JetBrains (any IDE)
-  local jb_roots=(
-    "$HOME/.config/JetBrains"
-    "$HOME/Library/Application Support/JetBrains"
-    "${APPDATA:-}/JetBrains"
-  )
-  for jb_root in "${jb_roots[@]}"; do
-    if [[ -d "$jb_root" ]]; then
-      DETECTED_AGENTS+=("jetbrains:JetBrains")
-      break
-    fi
-  done
-
-  # Sourcegraph Amp
-  if need_cmd amp || [[ -d "$HOME/.amp" ]]; then
-    DETECTED_AGENTS+=("amp:Sourcegraph Amp")
-  fi
-
-  # ── VS Code / Cursor extensions ──────────────────────────────────────────────
-
-  # Cline (VS Code extension)
-  local cline_added=false
-  for ext_dir in "${ext_dirs[@]}"; do
-    if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "saoudrizwan.claude-dev"; then
-      DETECTED_AGENTS+=("cline:Cline"); cline_added=true; break
-    fi
-  done
-
-  # Continue (VS Code extension)
-  for ext_dir in "${ext_dirs[@]}"; do
-    if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "continue.continue"; then
-      DETECTED_AGENTS+=("continue:Continue"); break
-    fi
-  done
-
-  # Roo / Roo Cline
-  for ext_dir in "${ext_dirs[@]}"; do
-    if [[ -d "$ext_dir" ]] && ls "$ext_dir" 2>/dev/null | grep -q "rooveterinaryinc.roo-cline"; then
-      DETECTED_AGENTS+=("roo:Roo"); break
-    fi
-  done
-
-  # ── AI coding platforms ──────────────────────────────────────────────────────
-
-  # OpenHands / All-Hands
-  if need_cmd openhands || [[ -d "$HOME/.openhands" ]]; then
-    DETECTED_AGENTS+=("openhands:OpenHands")
-  fi
-
-  # Devin
-  if [[ -d "$HOME/.devin" ]]; then
-    DETECTED_AGENTS+=("devin:Devin")
-  fi
-
-  # Kode
-  if need_cmd kode || [[ -d "$HOME/.kode" ]]; then
-    DETECTED_AGENTS+=("kode:Kode")
-  fi
-
-  # Aide
-  if need_cmd aide || [[ -d "$HOME/.aide" ]]; then
-    DETECTED_AGENTS+=("aide:Aide")
-  fi
-
-  if [[ ${#DETECTED_AGENTS[@]} -eq 0 ]]; then
-    warn "No AI coding agents detected."
-    warn "Install MCP manually using mcp.example.json, or run: sentinel init"
+  if [ -f "$config_file" ]; then
+    note "  config exists at $config_file — skipping"
     return
   fi
 
-  info "Detected agents:"
-  for entry in "${DETECTED_AGENTS[@]}"; do
-    echo "    ✓ ${entry##*:}"
-  done
-}
-
-# ─── list mode ────────────────────────────────────────────────────────────────
-
-do_list() {
-  bold "SENTINEL — Agent Detection"
-  echo ""
-  detect_agents
-  echo ""
-  echo "Supported: Claude Code, Gemini CLI, Codex CLI, Copilot CLI, Aider, v0,"
-  echo "           Cursor, Windsurf, VS Code, JetBrains, Amp, Cline, Continue,"
-  echo "           Roo, OpenHands, Devin, Kode, Aide — plus any skills-CLI-compatible agent."
-  echo ""
-  echo "Manual MCP config: $([ -d "$INSTALL_DIR" ] && echo "$INSTALL_DIR/mcp.example.json" || echo "mcp.example.json (run installer first)")"
-}
-
-# ─── MCP registration ─────────────────────────────────────────────────────────
-
-register_mcp() {
-  local install_dir="$1"
-  [[ "$NO_MCP" == "true" ]] && return
-  [[ ${#DETECTED_AGENTS[@]} -eq 0 ]] && { detect_agents; }
-
-  local registered=()
-  local manual_agents=()
-
-  for entry in "${DETECTED_AGENTS[@]}"; do
-    local agent_id="${entry%%:*}"
-    local agent_label="${entry##*:}"
-
-    [[ -n "$ONLY_AGENT" && "$agent_id" != "$ONLY_AGENT" ]] && continue
-
-    case "$agent_id" in
-      claude)
-        if need_cmd claude; then
-          if [[ "$DRY_RUN" == "true" ]]; then
-            echo "  [dry-run] claude mcp add sentinel -- uv run --project \"$install_dir\" python -m sentinel.mcp"
-            registered+=("$agent_label (dry-run)")
-          elif claude mcp add sentinel -- uv run --project "$install_dir" python -m sentinel.mcp 2>/dev/null; then
-            info "Claude Code: MCP server registered."
-            registered+=("$agent_label")
-          else
-            warn "Claude Code: auto-registration failed."
-            manual_agents+=("$agent_label")
-          fi
-        else
-          manual_agents+=("$agent_label")
-        fi
-        ;;
-      gemini)
-        if need_cmd gemini; then
-          if [[ "$DRY_RUN" == "true" ]]; then
-            echo "  [dry-run] gemini extensions install https://github.com/Wembie/Sentinel"
-            registered+=("$agent_label (dry-run)")
-          elif gemini extensions install "https://github.com/Wembie/Sentinel" 2>/dev/null; then
-            info "Gemini CLI: extension installed."
-            registered+=("$agent_label")
-          else
-            warn "Gemini CLI: auto-install failed."
-            manual_agents+=("$agent_label")
-          fi
-        else
-          manual_agents+=("$agent_label")
-        fi
-        ;;
-      *)
-        manual_agents+=("$agent_label")
-        ;;
-    esac
-  done
-
-  # Skills CLI fallback: covers Cursor, Windsurf, Cline, Continue, Roo, and 30+ more
-  # Runs unless --minimal or --only is specified
-  if need_cmd npx && [[ "$MINIMAL" != "true" ]] && [[ -z "$ONLY_AGENT" ]]; then
-    info "Running skills CLI registration (covers all skills-compatible agents)..."
-    if [[ "$DRY_RUN" == "true" ]]; then
-      echo "  [dry-run] npx -y skills add https://github.com/Wembie/Sentinel"
-    elif npx -y skills add "https://github.com/Wembie/Sentinel" 2>/dev/null; then
-      info "Skills CLI: SENTINEL registered."
-    else
-      warn "Skills CLI registration failed (npx error — non-fatal)."
-    fi
-  fi
-
-  if [[ ${#registered[@]} -gt 0 ]]; then
-    echo ""
-    info "Auto-registered: ${registered[*]}"
-  fi
-
-  if [[ ${#manual_agents[@]} -gt 0 ]]; then
-    echo ""
-    cyan "Manual MCP config needed for: ${manual_agents[*]}"
-    echo ""
-    echo "  Add to your editor's MCP server settings:"
-    echo "  {"
-    echo "    \"command\": \"uv\","
-    echo "    \"args\": [\"run\", \"--project\", \"$install_dir\", \"python\", \"-m\", \"sentinel.mcp\"]"
-    echo "  }"
-    echo ""
-    echo "  See $install_dir/mcp.example.json for editor-specific examples."
-    echo "  Or run: sentinel init  (in any project root) to drop rule files."
-  fi
-}
-
-# ─── hooks installation ───────────────────────────────────────────────────────
-
-install_hooks() {
-  local install_dir="$1"
-  local hooks_installer="$install_dir/hooks/install.sh"
-
-  if [[ ! -f "$hooks_installer" ]]; then
-    warn "Hooks installer not found at $hooks_installer — skipping."
+  local provider="" api_key=""
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    provider="claude"; api_key="$ANTHROPIC_API_KEY"
+  elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    provider="openai"; api_key="$OPENAI_API_KEY"
+  else
     return
   fi
 
-  info "Installing Claude Code hooks..."
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "  [dry-run] bash $hooks_installer --dry-run"
-  else
-    bash "$hooks_installer" || warn "Hooks installation failed (non-fatal)."
-  fi
+  say "  → detected $provider API key — writing config"
+  if [ "$DRY" = 1 ]; then note "  would write $config_file (llm_provider=$provider)"; return; fi
+
+  mkdir -p "$config_dir"
+  printf '{\n  "llm_provider": "%s",\n  "llm_api_key": "%s"\n}\n' "$provider" "$api_key" > "$config_file"
+  ok "  config: $config_file"
 }
 
-# ─── uninstall ────────────────────────────────────────────────────────────────
-
-do_uninstall() {
-  bold "Uninstalling SENTINEL..."
-  if [[ -d "$INSTALL_DIR" ]]; then
-    run_cmd rm -rf "$INSTALL_DIR"
-    info "Removed $INSTALL_DIR"
-  else
-    warn "Installation directory not found: $INSTALL_DIR"
-  fi
-  local wrapper="$BIN_DIR/sentinel-mcp"
-  if [[ -f "$wrapper" ]]; then
-    run_cmd rm -f "$wrapper"
-    info "Removed $wrapper"
-  fi
-  info "SENTINEL uninstalled."
-}
-
-# ─── upgrade ──────────────────────────────────────────────────────────────────
-
-do_upgrade() {
-  if [[ ! -d "$INSTALL_DIR/.git" ]]; then
-    die "Upgrade requires a git-cloned install (--dev). Use --uninstall then re-run installer."
-  fi
-  bold "Upgrading SENTINEL..."
-  run_cmd git -C "$INSTALL_DIR" pull --ff-only
-  run_cmd uv sync --project "$INSTALL_DIR"
-  validate_install
-  info "SENTINEL upgraded."
-}
-
-# ─── install ──────────────────────────────────────────────────────────────────
-
-do_install() {
+# ── Core installation (download + deps + wrapper) ──────────────────────────
+do_core_install() {
   local dev_mode="${1:-false}"
-  bold "Installing SENTINEL..."
-  [[ "$DRY_RUN" == "true" ]] && warn "Dry-run mode — no changes will be made."
-  echo ""
 
-  local py_cmd
-  py_cmd=$(check_python)
-  info "Python: $("$py_cmd" --version)"
+  say "🛡  SENTINEL installer"
+  note "  $REPO_URL"
+  [ "$DRY" = 1 ] && note "  (dry run — nothing will be written)"
+  echo
+
+  local py_cmd; py_cmd=$(check_python)
+  note "  python: $("$py_cmd" --version)"
 
   install_uv
 
-  if [[ "$dev_mode" == "true" ]]; then
-    if ! need_cmd git; then
-      die "--dev mode requires git. Install git and retry."
-    fi
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
-      warn "Git repo already exists at $INSTALL_DIR. Use --upgrade to update."
+  if [ "$dev_mode" = "true" ]; then
+    has git || { err "--dev requires git — https://git-scm.com"; exit 1; }
+    if [ -d "$INSTALL_DIR/.git" ]; then
+      warn "  $INSTALL_DIR already exists — use --upgrade"
     else
-      info "Cloning repository to $INSTALL_DIR..."
-      run_cmd git clone "$REPO_URL" "$INSTALL_DIR"
+      say "  → cloning to $INSTALL_DIR..."
+      run git clone "$REPO_URL" "$INSTALL_DIR"
     fi
   else
-    if [[ -d "$INSTALL_DIR" ]]; then
-      warn "Directory $INSTALL_DIR already exists. Use --upgrade or --uninstall first."
+    if [ -d "$INSTALL_DIR" ]; then
+      warn "  $INSTALL_DIR already exists — use --upgrade or --uninstall first"
     else
-      info "Downloading SENTINEL to $INSTALL_DIR..."
-      if [[ "$DRY_RUN" == "true" ]]; then
-        echo "  [dry-run] download $REPO_ARCHIVE → $INSTALL_DIR"
+      say "  → downloading to $INSTALL_DIR..."
+      if [ "$DRY" = 1 ]; then
+        note "  would download $REPO_ARCHIVE → $INSTALL_DIR"
       else
         mkdir -p "$INSTALL_DIR"
-        if need_cmd curl; then
+        if has curl; then
           curl -fsSL "$REPO_ARCHIVE" | tar -xz --strip-components=1 -C "$INSTALL_DIR"
-        elif need_cmd wget; then
+        elif has wget; then
           wget -qO- "$REPO_ARCHIVE" | tar -xz --strip-components=1 -C "$INSTALL_DIR"
         else
-          die "curl or wget required."
+          err "curl or wget required"; exit 1
         fi
       fi
     fi
   fi
 
-  info "Syncing dependencies..."
-  run_cmd uv sync --project "$INSTALL_DIR"
+  say "  → syncing dependencies..."
+  run uv sync --project "$INSTALL_DIR"
 
   ensure_bin_dir
   write_wrapper
   validate_install
-
-  detect_agents
-  register_mcp "$INSTALL_DIR"
-
-  # Optional: install Claude Code hooks
-  if [[ "$WITH_HOOKS" == "true" ]]; then
-    install_hooks "$INSTALL_DIR"
-  fi
-
-  # Optional: run sentinel init in current directory
-  if [[ "$WITH_INIT" == "true" ]]; then
-    info "Running sentinel init in current directory..."
-    run_cmd uv run --project "$INSTALL_DIR" sentinel init .
-  fi
-
-  echo ""
-  bold "SENTINEL installed successfully!"
-  echo ""
-  echo -e "  ${GREEN}Start MCP server:${RESET}    sentinel-mcp"
-  echo -e "  ${GREEN}Run audit:${RESET}           uv run --project \"$INSTALL_DIR\" sentinel audit ./"
-  echo -e "  ${GREEN}List rules:${RESET}          uv run --project \"$INSTALL_DIR\" sentinel rules"
-  echo -e "  ${GREEN}Per-project setup:${RESET}   uv run --project \"$INSTALL_DIR\" sentinel init"
-  echo -e "  ${GREEN}Install hooks:${RESET}       bash $INSTALL_DIR/hooks/install.sh"
-  echo ""
+  write_config
+  echo
 }
 
-# ─── dispatch ─────────────────────────────────────────────────────────────────
+# ── Per-agent install functions ────────────────────────────────────────────
+install_claude() {
+  DETECTED_COUNT=$((DETECTED_COUNT + 1))
+  say "→ Claude Code detected"
 
+  # Idempotency check
+  if [ "$FORCE" = 0 ] && has claude && claude mcp list 2>/dev/null | grep -qi "^sentinel"; then
+    note "  sentinel MCP already registered (--force to re-register)"
+    record_skipped "claude" "already registered"
+    echo; return 0
+  fi
+
+  if has claude; then
+    if try claude mcp add sentinel -- uv run --project "$INSTALL_DIR" python -m sentinel.mcp; then
+      ok "  MCP server registered"
+      record_installed "claude"
+    else
+      warn "  claude mcp add failed"
+      record_failed "claude" "claude mcp add failed"
+    fi
+  else
+    # Write config file manually
+    local claude_cfg="$HOME/.claude/claude.json"
+    if [ "$DRY" = 1 ]; then
+      note "  would patch $claude_cfg"
+      record_installed "claude (dry-run)"
+    else
+      warn "  claude CLI not found — add MCP server manually:"
+      note "    command: uv"
+      note "    args: [\"run\", \"--project\", \"$INSTALL_DIR\", \"python\", \"-m\", \"sentinel.mcp\"]"
+      record_failed "claude" "claude CLI not on PATH"
+    fi
+  fi
+
+  # --with-hooks
+  if [ "$WITH_HOOKS" = 1 ]; then
+    say "  → installing Claude Code hooks..."
+    local hooks_installer="$INSTALL_DIR/hooks/install.sh"
+    if [ -f "$hooks_installer" ]; then
+      local hooks_args=""; [ "$FORCE" = 1 ] && hooks_args="--force"
+      if [ "$DRY" = 1 ]; then
+        note "  would run: bash $hooks_installer $hooks_args"
+      else
+        # shellcheck disable=SC2086
+        if bash "$hooks_installer" $hooks_args; then
+          record_installed "claude-hooks"
+        else
+          warn "  hooks installer failed (non-fatal)"
+          record_failed "claude-hooks" "hooks/install.sh failed"
+        fi
+      fi
+    else
+      note "  hooks installer not found at $hooks_installer — run: bash $INSTALL_DIR/hooks/install.sh"
+      record_skipped "claude-hooks" "installer not found (run hooks/install.sh manually)"
+    fi
+  fi
+
+  echo
+}
+
+install_gemini() {
+  DETECTED_COUNT=$((DETECTED_COUNT + 1))
+  say "→ Gemini CLI detected"
+
+  if [ "$FORCE" = 0 ] && gemini extensions list 2>/dev/null | grep -qi "sentinel"; then
+    note "  sentinel extension already installed (--force to reinstall)"
+    record_skipped "gemini" "already installed"
+    echo; return 0
+  fi
+
+  if try gemini extensions install "$REPO_URL"; then
+    record_installed "gemini"
+  else
+    record_failed "gemini" "gemini extensions install failed"
+  fi
+  echo
+}
+
+install_via_skills() {
+  local id="$1" label="$2" profile="$3"
+  DETECTED_COUNT=$((DETECTED_COUNT + 1))
+  say "→ $label detected"
+
+  if ! ensure_node; then
+    record_failed "$id" "node/npx missing"
+    echo; return 0
+  fi
+
+  if try npx -y skills add "$REPO_URL" -a "$profile"; then
+    record_installed "$id"
+  else
+    record_failed "$id" "npx skills add (profile: $profile) failed"
+  fi
+  echo
+}
+
+# ── Uninstall ──────────────────────────────────────────────────────────────
+do_uninstall() {
+  say "🛡  uninstalling SENTINEL..."
+  if [ -d "$INSTALL_DIR" ]; then
+    run rm -rf "$INSTALL_DIR"; ok "  removed $INSTALL_DIR"
+  else
+    warn "  $INSTALL_DIR not found"
+  fi
+  local wrapper="$BIN_DIR/sentinel-mcp"
+  if [ -f "$wrapper" ]; then
+    run rm -f "$wrapper"; ok "  removed $wrapper"
+  fi
+  ok "  done."
+}
+
+# ── Upgrade ────────────────────────────────────────────────────────────────
+do_upgrade() {
+  [ -d "$INSTALL_DIR/.git" ] || { err "upgrade requires a --dev install (git repo at $INSTALL_DIR)"; exit 1; }
+  say "🛡  upgrading SENTINEL..."
+  run git -C "$INSTALL_DIR" pull --ff-only
+  run uv sync --project "$INSTALL_DIR"
+  validate_install
+  ok "  upgraded."
+}
+
+# ── Dispatch non-registration modes ───────────────────────────────────────
 case "$MODE" in
-  install)   do_install "false" ;;
-  dev)       do_install "true" ;;
-  upgrade)   do_upgrade ;;
-  uninstall) do_uninstall ;;
-  list)      do_list ;;
+  uninstall) do_uninstall; exit 0 ;;
+  upgrade)   do_upgrade;   exit 0 ;;
+  install)   do_core_install "false" ;;
+  dev)       do_core_install "true" ;;
 esac
+
+# ── Agent registration ─────────────────────────────────────────────────────
+say "🛡  registering with detected agents..."
+echo
+
+# Claude (native MCP + hooks)
+if want claude && detect_match "${PROVIDER_DETECT[0]}"; then
+  install_claude
+fi
+
+# Gemini (native extension)
+if want gemini && detect_match "${PROVIDER_DETECT[1]}"; then
+  install_gemini
+fi
+
+# All skills-based agents
+SKILLS_AGENTS=(
+  "codex|Codex CLI|codex|${PROVIDER_DETECT[2]}"
+  "cursor|Cursor|cursor|${PROVIDER_DETECT[3]}"
+  "windsurf|Windsurf|windsurf|${PROVIDER_DETECT[4]}"
+  "cline|Cline|cline|${PROVIDER_DETECT[5]}"
+  "copilot|GitHub Copilot|github-copilot|${PROVIDER_DETECT[6]}"
+  "continue|Continue|continue|${PROVIDER_DETECT[7]}"
+  "kilo|Kilo Code|kilo|${PROVIDER_DETECT[8]}"
+  "roo|Roo Code|roo|${PROVIDER_DETECT[9]}"
+  "augment|Augment Code|augment|${PROVIDER_DETECT[10]}"
+  "aider-desk|Aider Desk|aider-desk|${PROVIDER_DETECT[11]}"
+  "amp|Sourcegraph Amp|amp|${PROVIDER_DETECT[12]}"
+  "bob|IBM Bob|bob|${PROVIDER_DETECT[13]}"
+  "crush|Crush|crush|${PROVIDER_DETECT[14]}"
+  "devin|Devin|devin|${PROVIDER_DETECT[15]}"
+  "droid|Droid (Factory)|droid|${PROVIDER_DETECT[16]}"
+  "forgecode|ForgeCode|forgecode|${PROVIDER_DETECT[17]}"
+  "goose|Block Goose|goose|${PROVIDER_DETECT[18]}"
+  "iflow|iFlow CLI|iflow-cli|${PROVIDER_DETECT[19]}"
+  "junie|JetBrains Junie|junie|${PROVIDER_DETECT[20]}"
+  "kiro|Kiro CLI|kiro-cli|${PROVIDER_DETECT[21]}"
+  "mistral|Mistral Vibe|mistral-vibe|${PROVIDER_DETECT[22]}"
+  "openhands|OpenHands|openhands|${PROVIDER_DETECT[23]}"
+  "opencode|opencode|opencode|${PROVIDER_DETECT[24]}"
+  "qwen|Qwen Code|qwen-code|${PROVIDER_DETECT[25]}"
+  "qoder|Qoder|qoder|${PROVIDER_DETECT[26]}"
+  "rovodev|Atlassian Rovo Dev|rovodev|${PROVIDER_DETECT[27]}"
+  "tabnine|Tabnine CLI|tabnine-cli|${PROVIDER_DETECT[28]}"
+  "trae|Trae|trae|${PROVIDER_DETECT[29]}"
+  "warp|Warp|warp|${PROVIDER_DETECT[30]}"
+  "replit|Replit Agent|replit|${PROVIDER_DETECT[31]}"
+  "antigravity|Google Antigravity|antigravity|${PROVIDER_DETECT[32]}"
+)
+
+for spec in "${SKILLS_AGENTS[@]}"; do
+  IFS='|' read -r id label profile detect_spec <<EOF
+$spec
+EOF
+  if want "$id" && detect_match "$detect_spec"; then
+    install_via_skills "$id" "$label" "$profile"
+  fi
+done
+
+# ── Generic fallback: npx skills auto-detect ───────────────────────────────
+if [ "$SKIP_SKILLS" = 0 ] && [ ${#ONLY[@]} -eq 0 ] && [ "$DETECTED_COUNT" -eq 0 ]; then
+  say "→ no agents detected — running npx skills auto-detect fallback"
+  if ensure_node; then
+    if try npx -y skills add "$REPO_URL"; then
+      record_installed "skills-auto"
+    else
+      record_failed "skills-auto" "npx skills add (auto) failed"
+    fi
+  fi
+  echo
+fi
+
+# ── --with-init: write per-project rule files ──────────────────────────────
+if [ "$WITH_INIT" = 1 ]; then
+  say "→ writing per-project rule files into $PWD (--with-init)"
+  local_init_args=(".")
+  [ "$DRY" = 1 ]   && local_init_args+=("--dry-run")
+  [ "$FORCE" = 1 ] && local_init_args+=("--force")
+
+  if [ "$DRY" = 1 ]; then
+    note "  would run: uv run --project $INSTALL_DIR sentinel init ."
+  else
+    if uv run --project "$INSTALL_DIR" sentinel init "${local_init_args[@]}"; then
+      record_installed "sentinel-init ($PWD)"
+    else
+      record_failed "sentinel-init" "sentinel init failed"
+    fi
+  fi
+  echo
+elif [ ${#INSTALLED_IDS[@]} -gt 0 ] || [ ${#SKIPPED_IDS[@]} -gt 0 ]; then
+  note "  tip: re-run with --all (or --with-init) to also write per-project IDE rule files."
+fi
+
+# ── Summary ────────────────────────────────────────────────────────────────
+echo
+say "🛡  done"
+echo
+
+if [ ${#INSTALLED_IDS[@]} -gt 0 ]; then
+  ok "  installed:"
+  for a in "${INSTALLED_IDS[@]}"; do printf '    • %s\n' "$a"; done
+fi
+
+if [ ${#SKIPPED_IDS[@]} -gt 0 ]; then
+  echo "  skipped:"
+  i=0
+  while [ $i -lt ${#SKIPPED_IDS[@]} ]; do
+    printf '    • %s — %s\n' "${SKIPPED_IDS[$i]}" "${SKIPPED_WHY[$i]}"
+    i=$((i + 1))
+  done
+fi
+
+if [ ${#FAILED_IDS[@]} -gt 0 ]; then
+  warn "  failed:"
+  i=0
+  while [ $i -lt ${#FAILED_IDS[@]} ]; do
+    printf '    • %s — %s\n' "${FAILED_IDS[$i]}" "${FAILED_WHY[$i]}" >&2
+    i=$((i + 1))
+  done
+fi
+
+if [ ${#INSTALLED_IDS[@]} -eq 0 ] && [ ${#SKIPPED_IDS[@]} -eq 0 ] && [ ${#FAILED_IDS[@]} -eq 0 ]; then
+  note "  nothing detected — run 'install.sh --list' for all supported agents"
+  note "  or pass --only <agent> to force a specific target."
+fi
+
+echo
+note "  start an audit: uv run --project \"$INSTALL_DIR\" sentinel audit ./"
+note "  per-project setup: sentinel init"
+
+# Exit non-zero only when every detected agent failed (and at least one was detected).
+if [ "$DETECTED_COUNT" -gt 0 ] && [ ${#INSTALLED_IDS[@]} -eq 0 ] && [ ${#SKIPPED_IDS[@]} -eq 0 ]; then
+  exit 1
+fi
+exit 0
