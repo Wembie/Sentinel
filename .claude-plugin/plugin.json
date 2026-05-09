@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "0.1.3",
+  "version": "1.0.0",
   "description": "AI-powered contextual security auditing platform — red-team-grade SAST that thinks like an attacker.",
   "author": "Wembie",
   "license": "MIT",

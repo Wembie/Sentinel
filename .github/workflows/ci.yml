@@ -42,6 +42,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Ensure static manifests are version-synced
+        run: python scripts/release/sync_version.py --check
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 

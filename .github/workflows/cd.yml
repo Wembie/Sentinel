@@ -47,13 +47,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Ensure static manifests are version-synced
-        shell: bash
-        run: |
-          python scripts/sync_version.py
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Static manifests are out of sync with VERSION. Run: python scripts/sync_version.py and commit the updates."
-            exit 1
-          fi
+        run: python scripts/release/sync_version.py --check
 
       - name: Build package
         run: uv build
