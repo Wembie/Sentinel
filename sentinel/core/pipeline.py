@@ -23,7 +23,7 @@ class AuditPipeline:
     def __init__(self) -> None:
         self._stages: list[tuple[str, PipelineStage]] = []
 
-    def add_stage(self, name: str, fn: PipelineStage) -> "AuditPipeline":
+    def add_stage(self, name: str, fn: PipelineStage) -> AuditPipeline:
         self._stages.append((name, fn))
         return self
 

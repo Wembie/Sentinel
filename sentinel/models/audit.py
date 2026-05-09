@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from sentinel.models.finding import Finding, Severity
+from sentinel.models.finding import Finding
 
 
-class AuditMode(str, Enum):
+class AuditMode(StrEnum):
     FULL = "full"
     QUICK = "quick"
     TARGETED = "targeted"
@@ -36,7 +36,7 @@ class AuditRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AuditStatus(str, Enum):
+class AuditStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -59,7 +59,7 @@ class AuditSummary(BaseModel):
         duration: float,
         files: int,
         lines: int,
-    ) -> "AuditSummary":
+    ) -> AuditSummary:
         by_sev: dict[str, int] = {}
         by_analyzer: dict[str, int] = {}
         for f in findings:

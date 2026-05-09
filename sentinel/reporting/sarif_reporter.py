@@ -83,5 +83,6 @@ class SARIFReporter:
             "ruleId": f.rule_id or str(f.id),
             "level": _SEVERITY_LEVEL.get(f.severity.value, "warning"),
             "message": {"text": f.technical_explanation},
-            "locations": locations or [{"physicalLocation": {"artifactLocation": {"uri": "unknown"}}}],
+            "locations": locations
+            or [{"physicalLocation": {"artifactLocation": {"uri": "unknown"}}}],
         }

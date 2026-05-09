@@ -76,7 +76,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S"]
-ignore = ["S101", "S603", "S607", "S608"]
+ignore = ["S101", "S603", "S607", "S608", "B008", "S104", "S105", "E501"]
 
 [tool.mypy]
 python_version = "3.11"

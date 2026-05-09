@@ -12,7 +12,8 @@ log = structlog.get_logger()
 
 try:
     import tree_sitter_python as _tspython
-    from tree_sitter import Language, Parser as _TSParser
+    from tree_sitter import Language
+    from tree_sitter import Parser as _TSParser
 
     _PYTHON_LANGUAGE = Language(_tspython.language())
     _HAS_TREE_SITTER = True

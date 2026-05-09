@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -12,7 +12,11 @@ from rich.table import Table
 from sentinel import __version__
 from sentinel.config import get_settings
 from sentinel.logging import configure_logging
-from sentinel.models.audit import AuditRequest, AuditScope
+from sentinel.models.audit import AuditRequest, AuditResult, AuditScope
+
+if TYPE_CHECKING:
+    from sentinel.config import Settings
+    from sentinel.core.engine import AuditEngine
 
 app = typer.Typer(
     name="sentinel",
@@ -31,7 +35,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _main(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         "-V",
@@ -46,10 +50,12 @@ def _main(
 @app.command("audit")
 def audit(
     target: Path = typer.Argument(..., help="Target directory to audit"),
-    fmt: str = typer.Option("markdown", "--format", "-f", help="Output format: json|markdown|sarif"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write report to file"),
+    fmt: str = typer.Option(
+        "markdown", "--format", "-f", help="Output format: json|markdown|sarif"
+    ),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write report to file"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Disable LLM enrichment stage"),
-    languages: Optional[str] = typer.Option(
+    languages: str | None = typer.Option(
         None, "--languages", "-l", help="Comma-separated language filter (e.g. python,go)"
     ),
 ) -> None:
@@ -101,7 +107,9 @@ def serve(
 
 @app.command("init")
 def init(
-    target: Path = typer.Argument(Path("."), help="Target project directory (default: current dir)"),
+    target: Path = typer.Argument(
+        Path("."), help="Target project directory (default: current dir)"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print actions without writing files"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing rule files"),
 ) -> None:
@@ -212,11 +220,11 @@ Use SENTINEL MCP tools when asked about security: `sentinel_audit`, `sentinel_su
 """
 
     files: list[tuple[Path, str, bool]] = [
-        (target / ".cursor" / "rules" / "sentinel.mdc",    _CURSOR_RULE,    False),
-        (target / ".windsurf" / "rules" / "sentinel.md",   _WINDSURF_RULE,  False),
-        (target / ".clinerules" / "sentinel.md",            _CLINE_RULE,     False),
-        (target / "AGENTS.md",                              _AGENTS_SNIPPET, True),
-        (target / ".github" / "copilot-instructions.md",    _COPILOT_SNIPPET, True),
+        (target / ".cursor" / "rules" / "sentinel.mdc", _CURSOR_RULE, False),
+        (target / ".windsurf" / "rules" / "sentinel.md", _WINDSURF_RULE, False),
+        (target / ".clinerules" / "sentinel.md", _CLINE_RULE, False),
+        (target / "AGENTS.md", _AGENTS_SNIPPET, True),
+        (target / ".github" / "copilot-instructions.md", _COPILOT_SNIPPET, True),
     ]
 
     written = []
@@ -301,7 +309,7 @@ def list_rules() -> None:
     console.print(table)
 
 
-def _print_summary(result: AuditResult) -> None:  # type: ignore[name-defined]
+def _print_summary(result: AuditResult) -> None:
     from sentinel.models.finding import Severity
 
     sev_styles = {
@@ -326,7 +334,7 @@ def _print_summary(result: AuditResult) -> None:  # type: ignore[name-defined]
     console.print(table)
 
 
-async def _do_audit(settings, request):  # type: ignore[no-untyped-def]
+async def _do_audit(settings: Settings, request: AuditRequest) -> tuple[AuditResult, AuditEngine]:
     from sentinel.core.engine import AuditEngine
 
     engine = AuditEngine(settings)

@@ -90,22 +90,43 @@ def _get_stored(audit_id: str) -> tuple[Any, Any] | None:
 # ---------------------------------------------------------------------------
 
 _EXT_TO_LANG: dict[str, str] = {
-    ".py": "python", ".js": "javascript", ".mjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".go": "go", ".rb": "ruby", ".java": "java",
-    ".rs": "rust", ".php": "php", ".cs": "csharp",
-    ".cpp": "cpp", ".cc": "cpp", ".c": "c",
-    ".sh": "shell", ".bash": "shell",
-    ".yaml": "yaml", ".yml": "yaml",
-    ".json": "json", ".toml": "toml", ".tf": "terraform",
-    ".kt": "kotlin", ".scala": "scala", ".swift": "swift",
+    ".py": "python",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".rb": "ruby",
+    ".java": "java",
+    ".rs": "rust",
+    ".php": "php",
+    ".cs": "csharp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".c": "c",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".toml": "toml",
+    ".tf": "terraform",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".swift": "swift",
 }
 
 _LANG_TO_EXTS: dict[str, list[str]] = {
-    "python": [".py"], "javascript": [".js", ".mjs"],
-    "typescript": [".ts", ".tsx"], "go": [".go"],
-    "ruby": [".rb"], "java": [".java"], "rust": [".rs"],
-    "php": [".php"], "csharp": [".cs"], "cpp": [".cpp", ".cc"],
+    "python": [".py"],
+    "javascript": [".js", ".mjs"],
+    "typescript": [".ts", ".tsx"],
+    "go": [".go"],
+    "ruby": [".rb"],
+    "java": [".java"],
+    "rust": [".rs"],
+    "php": [".php"],
+    "csharp": [".cs"],
+    "cpp": [".cpp", ".cc"],
 }
 
 
@@ -126,9 +147,7 @@ async def _build_context(
     settings = get_settings()
     request = AuditRequest(
         target=Path(target).resolve(),
-        scope=AuditScope(
-            languages=[lang.strip() for lang in languages.split(",") if lang.strip()]
-        ),
+        scope=AuditScope(languages=[lang.strip() for lang in languages.split(",") if lang.strip()]),
         llm_enabled=False,
     )
     ctx = AuditContext(request)
@@ -152,8 +171,8 @@ async def _build_context(
 async def _parse_one(ts: Any, path: str, content: str, ctx: Any) -> None:
     try:
         ctx.parsed_files[path] = await ts.parse(Path(path), content)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        log.debug("parse_skip", path=path, reason=str(exc))
 
 
 async def _run_rules_on_ctx(ctx: Any, tag_filter: str = "") -> list[Any]:
@@ -166,9 +185,7 @@ async def _run_rules_on_ctx(ctx: Any, tag_filter: str = "") -> list[Any]:
     if tag_filter:
         rules = [r for r in rules if tag_filter.lower() in r.metadata.tags] or rules
 
-    results = await asyncio.gather(
-        *[rule.match(ctx) for rule in rules], return_exceptions=True
-    )
+    results = await asyncio.gather(*[rule.match(ctx) for rule in rules], return_exceptions=True)
     findings: list[Any] = []
     for result in results:
         if not isinstance(result, BaseException):
@@ -205,9 +222,7 @@ async def sentinel_audit(
     settings = get_settings()
     request = AuditRequest(
         target=Path(target).resolve(),
-        scope=AuditScope(
-            languages=[lang.strip() for lang in languages.split(",") if lang.strip()]
-        ),
+        scope=AuditScope(languages=[lang.strip() for lang in languages.split(",") if lang.strip()]),
         llm_enabled=not no_llm,
     )
 
@@ -254,18 +269,58 @@ async def sentinel_surface(target: str, languages: str = "") -> str:
         lang_counts[lang] = lang_counts.get(lang, 0) + 1
 
     _SECURITY_KEYWORDS = [
-        "auth", "login", "password", "token", "secret", "key", "credential",
-        "admin", "user", "payment", "upload", "execute", "query", "eval",
-        "config", "settings", "database", "db", "sql", "shell", "subprocess",
-        "webhook", "api", "route", "endpoint", "middleware", "deserializ",
-        "serialize", "pickle", "yaml", "jwt", "session", "cookie", "csrf",
-        "permission", "role", "acl", "rbac", "oauth", "saml", "signature",
-        "encrypt", "decrypt", "hash", "sign", "verify", "certificate", "tls",
+        "auth",
+        "login",
+        "password",
+        "token",
+        "secret",
+        "key",
+        "credential",
+        "admin",
+        "user",
+        "payment",
+        "upload",
+        "execute",
+        "query",
+        "eval",
+        "config",
+        "settings",
+        "database",
+        "db",
+        "sql",
+        "shell",
+        "subprocess",
+        "webhook",
+        "api",
+        "route",
+        "endpoint",
+        "middleware",
+        "deserializ",
+        "serialize",
+        "pickle",
+        "yaml",
+        "jwt",
+        "session",
+        "cookie",
+        "csrf",
+        "permission",
+        "role",
+        "acl",
+        "rbac",
+        "oauth",
+        "saml",
+        "signature",
+        "encrypt",
+        "decrypt",
+        "hash",
+        "sign",
+        "verify",
+        "certificate",
+        "tls",
     ]
 
     notable = sorted(
-        p for p in ctx.file_contents
-        if any(kw in p.lower() for kw in _SECURITY_KEYWORDS)
+        p for p in ctx.file_contents if any(kw in p.lower() for kw in _SECURITY_KEYWORDS)
     )
 
     lines = [
@@ -283,9 +338,7 @@ async def sentinel_surface(target: str, languages: str = "") -> str:
     lines += ["", "## Security-Relevant Files", ""]
     for path in notable[:50]:
         meta = ctx.file_metadata.get(path, {})
-        lines.append(
-            f"- `{path}` ({meta.get('language', '?')}, {meta.get('lines', 0)} lines)"
-        )
+        lines.append(f"- `{path}` ({meta.get('language', '?')}, {meta.get('lines', 0)} lines)")
     if not notable:
         lines.append("_No notably named files detected._")
 
@@ -333,7 +386,9 @@ async def sentinel_trace(
         "secret": [NodeType.SECRET],
         "all": [NodeType.DATABASE, NodeType.OUTPUT, NodeType.SECRET],
     }
-    sink_types = _SINK_MAP.get(sink_type.lower(), [NodeType.DATABASE, NodeType.OUTPUT, NodeType.SECRET])
+    sink_types = _SINK_MAP.get(
+        sink_type.lower(), [NodeType.DATABASE, NodeType.OUTPUT, NodeType.SECRET]
+    )
 
     header = [
         f"# Taint Flow Analysis — `{target}`",
@@ -473,9 +528,7 @@ async def sentinel_attack_graph(
         for src, dst, _ in crossings[:30]:
             _emit_node(src)
             _emit_node(dst)
-            mermaid.append(
-                f"    {_safe_id(src.id)} -->|trust crossing| {_safe_id(dst.id)}"
-            )
+            mermaid.append(f"    {_safe_id(src.id)} -->|trust crossing| {_safe_id(dst.id)}")
 
         for ep_id, priv_id in priv_pairs[:20]:
             ep = backend.get_node(ep_id)
@@ -485,9 +538,7 @@ async def sentinel_attack_graph(
             if priv:
                 _emit_node(priv)
             if ep and priv:
-                mermaid.append(
-                    f"    {_safe_id(ep_id)} -.->|reachable| {_safe_id(priv_id)}"
-                )
+                mermaid.append(f"    {_safe_id(ep_id)} -.->|reachable| {_safe_id(priv_id)}")
 
         if len(mermaid) <= 2:
             mermaid.append('    A["No inter-trust edges detected"]')
@@ -594,9 +645,7 @@ async def sentinel_logic(
     settings = get_settings()
     request = AuditRequest(
         target=Path(target).resolve(),
-        scope=AuditScope(
-            languages=[lang.strip() for lang in languages.split(",") if lang.strip()]
-        ),
+        scope=AuditScope(languages=[lang.strip() for lang in languages.split(",") if lang.strip()]),
         llm_enabled=not no_llm,
     )
     ctx = AuditContext(request)
@@ -613,35 +662,37 @@ async def sentinel_logic(
         for line_num, line in enumerate(file_lines, 1):
             for description, pattern, mitigation in _LOGIC_PATTERNS:
                 if pattern.search(line):
-                    ctx.add_finding(Finding(
-                        title=f"Logic Flaw Pattern: {description}",
-                        severity=Severity.MEDIUM,
-                        confidence=Confidence.LOW,
-                        affected_components=[rel_path],
-                        locations=[Location(file=rel_path, line_start=line_num)],
-                        attack_surface="Application logic / authorization layer",
-                        exploitation_requirements="Understanding of application auth flow",
-                        technical_explanation=description,
-                        root_cause="Potential insufficient or bypassable authorization check",
-                        attack_scenario=(
-                            "Attacker manipulates request parameters or exploits "
-                            "logic flaws to access unauthorized resources or escalate privileges."
-                        ),
-                        potential_impact="Unauthorized data access or privilege escalation",
-                        blast_radius="Depends on exposed resource sensitivity",
-                        detection_difficulty="medium",
-                        business_risk="Unauthorized access to sensitive data or admin functions",
-                        mitigation_strategy=mitigation,
-                        secure_refactor_recommendations=[
-                            "Always verify resource ownership server-side",
-                            "Never trust client-supplied role or privilege values",
-                            "Use framework-level authorization decorators consistently",
-                            "Apply OWASP ASVS Level 2 access control requirements",
-                        ],
-                        analyzer="sentinel_logic",
-                        rule_id="LOGIC-PATTERN",
-                        tags=["logic", "auth", "idor", "access-control"],
-                    ))
+                    ctx.add_finding(
+                        Finding(
+                            title=f"Logic Flaw Pattern: {description}",
+                            severity=Severity.MEDIUM,
+                            confidence=Confidence.LOW,
+                            affected_components=[rel_path],
+                            locations=[Location(file=rel_path, line_start=line_num)],
+                            attack_surface="Application logic / authorization layer",
+                            exploitation_requirements="Understanding of application auth flow",
+                            technical_explanation=description,
+                            root_cause="Potential insufficient or bypassable authorization check",
+                            attack_scenario=(
+                                "Attacker manipulates request parameters or exploits "
+                                "logic flaws to access unauthorized resources or escalate privileges."
+                            ),
+                            potential_impact="Unauthorized data access or privilege escalation",
+                            blast_radius="Depends on exposed resource sensitivity",
+                            detection_difficulty="medium",
+                            business_risk="Unauthorized access to sensitive data or admin functions",
+                            mitigation_strategy=mitigation,
+                            secure_refactor_recommendations=[
+                                "Always verify resource ownership server-side",
+                                "Never trust client-supplied role or privilege values",
+                                "Use framework-level authorization decorators consistently",
+                                "Apply OWASP ASVS Level 2 access control requirements",
+                            ],
+                            analyzer="sentinel_logic",
+                            rule_id="LOGIC-PATTERN",
+                            tags=["logic", "auth", "idor", "access-control"],
+                        )
+                    )
 
     findings = sorted(ctx.findings, key=lambda f: f.risk_score, reverse=True)
     dummy = AuditResult(
@@ -721,9 +772,7 @@ async def sentinel_review(
         request_id=request.id,
         status=AuditStatus.COMPLETED,
         findings=sorted_findings,
-        summary=AuditSummary.from_findings(
-            sorted_findings, 0.0, 1, content.count("\n") + 1
-        ),
+        summary=AuditSummary.from_findings(sorted_findings, 0.0, 1, content.count("\n") + 1),
     )
     _store_result(dummy, request)
 
@@ -840,11 +889,21 @@ async def sentinel_verify(
 
     target_line = file_lines[line_idx] if line_idx < len(file_lines) else ""
     _VULN_TOKENS = [
-        'execute(f"', "execute(f'", "execute(%", ".execute(",
-        'shell=True', 'os.system(', 'subprocess.',
-        'password = "', "password = '", 'secret = "', "secret = '",
-        'verify=False', 'ssl_verify=False',
-        'eval(', 'exec(',
+        'execute(f"',
+        "execute(f'",
+        "execute(%",
+        ".execute(",
+        "shell=True",
+        "os.system(",
+        "subprocess.",
+        'password = "',
+        "password = '",
+        'secret = "',
+        "secret = '",
+        "verify=False",
+        "ssl_verify=False",
+        "eval(",
+        "exec(",
     ]
     matched = [tok for tok in _VULN_TOKENS if tok in target_line]
 
@@ -1031,7 +1090,7 @@ _HARDEN_CHECKS: list[tuple[str, str, re.Pattern[str], str]] = [
     (
         "TLS / Transport",
         "Non-HTTPS URL hardcoded for external service",
-        re.compile(r'http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])', re.I),
+        re.compile(r"http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])", re.I),
         "Use HTTPS for all external service URLs",
     ),
     (
@@ -1085,7 +1144,7 @@ _HARDEN_CHECKS: list[tuple[str, str, re.Pattern[str], str]] = [
     (
         "Dependency / Supply Chain",
         "Unpinned dependency reference",
-        re.compile(r'pip install\s+\w+(?![>=<!\s])', re.I),
+        re.compile(r"pip install\s+\w+(?![>=<!\s])", re.I),
         "Pin all dependencies with exact versions and use a lockfile (uv.lock, requirements.txt)",
     ),
 ]
@@ -1339,9 +1398,7 @@ async def sentinel_hunt(target: str, category: str) -> str:
             f"Available tags: {', '.join(f'`{t}`' for t in available)}"
         )
 
-    results = await asyncio.gather(
-        *[rule.match(ctx) for rule in matching], return_exceptions=True
-    )
+    results = await asyncio.gather(*[rule.match(ctx) for rule in matching], return_exceptions=True)
     findings: list[Any] = []
     for result in results:
         if not isinstance(result, BaseException):
@@ -1358,9 +1415,7 @@ async def sentinel_hunt(target: str, category: str) -> str:
         request_id=request.id,
         status=AuditStatus.COMPLETED,
         findings=findings,
-        summary=AuditSummary.from_findings(
-            findings, 0.0, ctx.files_analyzed, ctx.lines_analyzed
-        ),
+        summary=AuditSummary.from_findings(findings, 0.0, ctx.files_analyzed, ctx.lines_analyzed),
     )
     _store_result(dummy, request)
 

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class NodeType(str, Enum):
+class NodeType(StrEnum):
     FILE = "file"
     FUNCTION = "function"
     CLASS = "class"
@@ -21,7 +21,7 @@ class NodeType(str, Enum):
     OUTPUT = "output"
 
 
-class EdgeType(str, Enum):
+class EdgeType(StrEnum):
     CALLS = "calls"
     IMPORTS = "imports"
     INHERITS = "inherits"
@@ -33,7 +33,7 @@ class EdgeType(str, Enum):
     WRITES_OUTPUT = "writes_output"
 
 
-class TrustLevel(str, Enum):
+class TrustLevel(StrEnum):
     UNTRUSTED = "untrusted"
     SEMI_TRUSTED = "semi_trusted"
     TRUSTED = "trusted"

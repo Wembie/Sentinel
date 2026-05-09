@@ -69,7 +69,11 @@ class Settings(BaseSettings):
 
         config_file = _find_config_file()
         if config_file:
-            return (init_settings, env_settings, JsonConfigSettingsSource(settings_cls, config_file))
+            return (
+                init_settings,
+                env_settings,
+                JsonConfigSettingsSource(settings_cls, config_file),
+            )
         return (init_settings, env_settings)
 
 
