@@ -1,6 +1,6 @@
 ---
 name: sentinel
-version: "0.1.5"
+version: "1.0.0"
 description: AI-powered contextual security auditing — red-team-grade SAST, taint flow, attack graphs, exploit chains
 author: Wembie
 repo: https://github.com/Wembie/Sentinel
