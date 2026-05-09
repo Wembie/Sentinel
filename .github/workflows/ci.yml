@@ -21,8 +21,17 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          BASE_VERSION="$(git show "${{ github.event.pull_request.base.sha }}:VERSION")"
-          HEAD_VERSION="$(git show "${{ github.event.pull_request.head.sha }}:VERSION")"
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+([+-].+)?$'
+          BASE_VERSION="$(git show "${{ github.event.pull_request.base.sha }}:VERSION" | tr -d '[:space:]')"
+          HEAD_VERSION="$(git show "${{ github.event.pull_request.head.sha }}:VERSION" | tr -d '[:space:]')"
+          if ! [[ "$BASE_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Base VERSION is not valid semver: $BASE_VERSION"
+            exit 1
+          fi
+          if ! [[ "$HEAD_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Head VERSION is not valid semver: $HEAD_VERSION"
+            exit 1
+          fi
           if [ "$BASE_VERSION" = "$HEAD_VERSION" ]; then
             echo "::error::VERSION not bumped. Bump VERSION before merging."
             exit 1
