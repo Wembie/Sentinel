@@ -30,11 +30,11 @@ jobs:
           else
             RANGE="HEAD~1..HEAD"
           fi
-          if git diff --name-only "${RANGE}" -- VERSION | grep -qx 'VERSION'; then
-            echo "changed=true"  >> $GITHUB_OUTPUT
+          if git diff --quiet "${RANGE}" -- VERSION; then
+            echo "changed=false" >> $GITHUB_OUTPUT
             echo "version=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
           else
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=true"  >> $GITHUB_OUTPUT
             echo "version=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
           fi
 
